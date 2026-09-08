@@ -4,6 +4,8 @@
 
 **사진을 SDXL로 변형한 뒤 기존 3D 모델에 넣어 PCD를 만드는 실험**과 **Stable Fast 3D 직접 비교 실험**을 제공합니다.
 
+원본 사진에 SF3D를 직접 적용하는 재현 가능한 실행·검증·영상 명령은 [SF3D_RUNBOOK.md](SF3D_RUNBOOK.md)를 참고하세요. `sf3d_workflow.py`는 모델 revision·입력 해시·환경을 기록하고 GLB/PCD 검증을 수행합니다. 실제 RTX 4090 SF3D 추론은 아직 미검증입니다.
+
 | 경로 | 실행 | 확인할 것 |
 |---|---|---|
 | 원본 사진 → Hunyuan3D / TRELLIS → PCD | `img2pcd.py` | 기존 대조군 |
