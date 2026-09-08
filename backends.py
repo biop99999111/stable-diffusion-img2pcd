@@ -357,6 +357,11 @@ class Hunyuan3DBackend:
 
     def load(self):
         self._ensure_paths()
+        if self.st.texture:
+            self._texture_api()  # Fail before spending time on shape generation.
+        if self.st.texture_only:
+            self.shape_pipeline = None
+            return self
         from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 
         model_id = self.st.model_id or self.default_model
@@ -367,6 +372,19 @@ class Hunyuan3DBackend:
         print(f"[gen] shape call signature: {inspect.signature(self.shape_pipeline.__call__)}")
         _report_gpu()
         return self
+
+    @staticmethod
+    def _texture_api():
+        try:
+            import bpy  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "Hunyuan texture requires bpy. In Python 3.10 run: "
+                "python -m pip install 'numpy<2' 'bpy==4.0.0' "
+                "--extra-index-url https://download.blender.org/pypi/"
+            ) from exc
+        from textureGenPipeline import Hunyuan3DPaintConfig, Hunyuan3DPaintPipeline
+        return Hunyuan3DPaintConfig, Hunyuan3DPaintPipeline
 
     @staticmethod
     def _prepare_image(image_path: Path, work_dir: Path) -> Path:
@@ -404,6 +422,18 @@ class Hunyuan3DBackend:
 
     def generate(self, image_path: Path, out_glb: Path, st) -> dict:
         out_glb.parent.mkdir(parents=True, exist_ok=True)
+        shape_glb = out_glb.parent / "mesh_shape.glb"
+        if st.texture_only:
+            if not shape_glb.is_file():
+                raise FileNotFoundError(f"--texture-only requires saved shape: {shape_glb}")
+            prepared = out_glb.parent / "input_nobg.png"
+            if not prepared.is_file():
+                prepared = self._prepare_image(image_path, out_glb.parent)
+            return self._paint(shape_glb, prepared, out_glb, st,
+                               {"backend": self.name, "shape_reused": True,
+                                "shape_source": str(shape_glb.resolve()), "textured": False})
+        if self.shape_pipeline is None:
+            self.load()  # Previous part's texture step released the shape model.
         prepared = self._prepare_image(image_path, out_glb.parent)
 
         wanted: dict = {}
@@ -447,30 +477,65 @@ class Hunyuan3DBackend:
         _free_cuda()
         print("[gen] shape 파이프라인 해제 -> texture 로드")
 
-        from textureGenPipeline import Hunyuan3DPaintConfig, Hunyuan3DPaintPipeline
+        return self._paint(shape_glb, prepared, out_glb, st, info)
 
+    def _paint(self, shape_glb, prepared, out_glb, st, info):
+        Hunyuan3DPaintConfig, Hunyuan3DPaintPipeline = self._texture_api()
+        out_glb = out_glb.resolve()
+        shape_glb, prepared = shape_glb.resolve(), prepared.resolve()
+        _free_cuda()
         t1 = time.time()
         cfg = Hunyuan3DPaintConfig(max_num_view=st.paint_views, resolution=st.paint_resolution)
+        cfg.multiview_cfg_path = str(self.root / "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml")
+        cfg.realesrgan_ckpt_path = str(self.root / "hy3dpaint/ckpt/RealESRGAN_x4plus.pth")
+        for required in (cfg.multiview_cfg_path, cfg.realesrgan_ckpt_path):
+            if not Path(required).is_file():
+                raise FileNotFoundError(f"Texture asset missing: {required}")
+        # Official paint saves OBJ first, then converts .obj -> .glb. Passing .glb
+        # as output_mesh_path writes OBJ text to a GLB name and breaks conversion.
+        import tempfile
+        import shutil
+        work_dir = Path(tempfile.mkdtemp(prefix="paint_", dir=out_glb.parent))
+        work_shape = work_dir / "mesh_shape.glb"
+        shutil.copy2(shape_glb, work_shape)
+        obj_path = work_dir / "textured_mesh.obj"
         paint = Hunyuan3DPaintPipeline(cfg)
-        result = paint(str(shape_glb), image_path=str(prepared), output_mesh_path=str(out_glb))
-        t_tex = time.time() - t1
-        produced = Path(result) if isinstance(result, (str, Path)) else out_glb
-        if produced != out_glb and produced.exists():
+        try:
+            paint(str(work_shape), image_path=str(prepared), output_mesh_path=str(obj_path))
+            produced = obj_path.with_suffix(".glb")
+            validate_glb(produced)
             produced.replace(out_glb)
+        finally:
+            del paint
+        t_tex = time.time() - t1
         peak_tex = _peak_vram()
         print(f"[gen] texture in {t_tex:.1f}s (peak {peak_tex:.2f} GiB) -> {out_glb}")
 
-        del paint
         _free_cuda()
         info.update(
             t_texture_s=round(t_tex, 2),
             peak_vram_texture_gib=round(peak_tex, 2),
             textured=True,
+            texture_intermediates=str(work_dir),
         )
         return info
 
 
 # ---------------------------------------------------------------- 선택
+
+
+def validate_glb(path: Path) -> None:
+    """Reject missing output, OBJ renamed to GLB, and truncated GLB containers."""
+    import struct
+    if not path.is_file():
+        raise RuntimeError(f"Texture GLB was not created (Blender conversion failed): {path}")
+    with path.open("rb") as stream:
+        header = stream.read(12)
+    if len(header) != 12:
+        raise RuntimeError(f"Truncated GLB: {path}")
+    magic, version, length = struct.unpack("<4sII", header)
+    if magic != b"glTF" or version != 2 or length != path.stat().st_size:
+        raise RuntimeError(f"Invalid GLB container: {path}")
 
 
 from sf3d_backend import StableFast3DBackend

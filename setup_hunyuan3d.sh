@@ -81,10 +81,8 @@ echo "=== 5. requirements ==="
 # env 에 이미 torch 2.5.1 이 있으므로 격리를 끄고 그걸 재사용한다.
 pip install cython
 
-# bpy==4.0 은 PyPI 에서 내려갔다. 남아 있는 최소 버전은 4.2.0 이고 python>=3.11 만
-# 지원해서 이 env(3.10)에서는 어떤 버전도 못 깐다. pip 는 해결 실패 시 아무것도
-# 설치하지 않으므로 이 한 줄 때문에 전체가 죽는다. shape 생성 경로에는 쓰이지
-# 않으므로 빼고 설치한다(필요해지면 임포트 에러로 드러난다).
+# bpy 4.0/Python 3.10 wheels moved from PyPI to Blender's official archive.
+# Install separately so only this step needs the additional package index.
 REQ_FILE=/tmp/hy_requirements_clean.txt
 # requirements.txt 안에 --extra-index-url 로 중국 미러가 적혀 있으면 환경변수나
 # 설정 파일로는 못 지운다. 실측: 미러 경유 1.1 MB/s vs 회선 실측 169 MB/s (150배).
@@ -95,10 +93,12 @@ else
   grep -v '^bpy' requirements.txt | grep -v 'index-url' > "$REQ_FILE"
 fi
 if ! diff -q requirements.txt "$REQ_FILE" >/dev/null 2>&1; then
-  echo "requirements 조정: bpy 제외(PyPI 에서 4.0 삭제·4.2.0+ 는 python>=3.11)"
+  echo "requirements 조정: bpy는 Blender 공식 보관소에서 별도 설치"
   [ -z "${PIP_KEEP_MIRRORS:-}" ] && echo "                  index-url 줄 제외(미러 스로틀 회피)"
 fi
 pip install -r "$REQ_FILE" --no-build-isolation
+python -m pip install 'numpy<2' 'bpy==4.0.0' --extra-index-url https://download.blender.org/pypi/
+python -c 'import bpy; print("Blender", bpy.app.version_string)'
 
 echo
 echo "=== 6. texture 확장 빌드 (실패해도 shape 는 돈다) ==="

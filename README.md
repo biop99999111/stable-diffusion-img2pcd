@@ -78,12 +78,32 @@ SF3D API는 [공식 run.py](https://github.com/Stability-AI/stable-fast-3d/blob/
 
 ## 검증 상태
 
+### Hunyuan 텍스처 단계 복구 (Python 3.10)
+
+`ModuleNotFoundError: No module named 'bpy'`는 구형 설치 스크립트에서 bpy를 제외한 경우 발생합니다.
+[Blender 공식 안내](https://pypi.org/project/bpy/)에 따라 보관소에서 설치합니다.
+
+```bash
+conda activate hunyuan3d
+python -m pip install 'numpy<2' 'bpy==4.0.0' --extra-index-url https://download.blender.org/pypi/
+python -c 'import bpy; print(bpy.app.version_string)'
+git pull --ff-only
+python img2pcd.py --config out_sd_bumper_01/parts_sd.yaml --texture-only --out out_sd_textured_01
+```
+
+`--texture-only`는 해당 출력 폴더의 `mesh_shape.glb`와 `input_nobg.png`를 재사용하며 shape 모델을 로드하지 않습니다.
+원본 형상과 대응하는 이미지 설정으로만 재개하세요. OBJ·MTL·텍스처 중간 파일은 부품 폴더의 `paint_*/`에 보존됩니다.
+텍스처 경로는 OBJ를 생성하고 Blender로 GLB 변환 후 바이너리 헤더 검증을 통과한 파일만 `mesh.glb`로 채택합니다.
+모델 설정·RealESRGAN 가중치 경로는 Hunyuan 소스 기준 절대 경로로 지정합니다.
+
+### CPU 검사
+
 ```bash
 python -m unittest test_sd_spike -v
 python smoke_test.py
 ```
 
-- 새 CPU 테스트 7개 통과: 입력 비율·투명도, 잘못된 설정, seed·설정·manifest, SF3D 호출 계약, 실제 GLB→PCD 통합.
+- CPU 테스트 11개 통과: 입력 비율·투명도, 잘못된 설정, seed·설정·manifest, SF3D 호출 계약, 실제 GLB→PCD 통합, Hunyuan 텍스처 재개·GLB 검증.
 - 기존 CPU 스모크 테스트 12/12 통과, 실제 범퍼 사진의 SDXL `--dry-run` 통과.
 - 모델 호출은 모의 객체로 검증했습니다. **SDXL/SF3D 실제 GPU 추론과 설치 스크립트의 GPU 서버 실행은 미검증**입니다. 성능·형상 개선 수치는 아직 없습니다.
 - `sd_manifest.json`의 시간은 SDXL 단계, 부품 `manifest.json`의 시간은 3D 단계입니다. VRAM은 PyTorch allocated peak이며 드라이버 전체 사용량과 다릅니다.

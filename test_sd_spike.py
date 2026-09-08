@@ -126,5 +126,74 @@ class SpikeTests(unittest.TestCase):
                 backend.generate(self.root / "empty.png", self.root / "mesh.glb", st)
 
 
+class TextureResumeTests(unittest.TestCase):
+    def setUp(self):
+        import backends
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.st = img2pcd.Settings(backend="hunyuan3d", texture=True, texture_only=True)
+        self.backend = backends.Hunyuan3DBackend(self.st)
+        self.backend.root = self.root
+        for name in ("hy3dpaint/cfgs/hunyuan-paint-pbr.yaml", "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"):
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"test asset")
+        self.shape = self.root / "mesh_shape.glb"
+        self.shape.write_bytes(b"saved shape")
+        self.image = self.root / "input_nobg.png"
+        Image.new("RGBA", (8, 8), "white").save(self.image)
+        self.output = self.root / "mesh.glb"
+
+    def test_resume_load_skips_shape_import(self):
+        with patch.object(self.backend, "_ensure_paths"), patch.object(self.backend, "_texture_api"), \
+             patch.dict(sys.modules, {"hy3dshape.pipelines": None}):
+            self.assertIs(self.backend.load(), self.backend)
+            self.assertIsNone(self.backend.shape_pipeline)
+
+    def test_missing_saved_shape_fails(self):
+        with self.assertRaises(FileNotFoundError):
+            self.backend.generate(self.image, self.root / "missing/mesh.glb", self.st)
+
+    def test_obj_export_and_verified_glb_promotion(self):
+        import trimesh
+        calls = []
+        def make_paint(cfg):
+            self.assertEqual(cfg.multiview_cfg_path, str(self.root / "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"))
+            def paint(mesh_path, image_path, output_mesh_path):
+                self.assertEqual(Path(mesh_path).read_bytes(), b"saved shape")
+                self.assertEqual(Path(image_path), self.image)
+                obj = Path(output_mesh_path)
+                calls.append(obj)
+                self.assertEqual(obj.suffix, ".obj")
+                obj.write_text("# OBJ", encoding="utf-8")
+                trimesh.creation.box().export(obj.with_suffix(".glb"))
+                return str(obj)
+            return paint
+        with patch.object(self.backend, "_texture_api", return_value=(lambda **kw: SimpleNamespace(), make_paint)), \
+             patch("backends._free_cuda"), patch("backends._peak_vram", return_value=1.):
+            result = self.backend.generate(self.image, self.output, self.st)
+        self.assertTrue(result["shape_reused"])
+        self.assertTrue(result["textured"])
+        self.assertNotIn("t_generate_s", result)
+        self.assertEqual(self.output.read_bytes()[:4], b"glTF")
+        self.assertEqual(self.shape.read_bytes(), b"saved shape")
+        self.assertTrue(calls[0].is_file())
+
+    def test_failed_conversion_preserves_existing_glb(self):
+        self.output.write_bytes(b"previous valid result")
+        def make_paint(cfg):
+            def paint(mesh_path, image_path, output_mesh_path):
+                # Upstream may silently return even when Blender conversion fails.
+                Path(output_mesh_path).with_suffix(".glb").write_text("# actually OBJ", encoding="utf-8")
+                return output_mesh_path
+            return paint
+        with patch.object(self.backend, "_texture_api", return_value=(lambda **kw: SimpleNamespace(), make_paint)), \
+             patch("backends._free_cuda"):
+            with self.assertRaisesRegex(RuntimeError, "GLB"):
+                self.backend.generate(self.image, self.output, self.st)
+        self.assertEqual(self.output.read_bytes(), b"previous valid result")
+
+
 if __name__ == "__main__":
     unittest.main()

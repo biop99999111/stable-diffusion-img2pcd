@@ -78,6 +78,7 @@ class Settings:
     oom_fallback: bool = True             # OOM 이면 한 번 더 가볍게 재시도
     oom_fallback_type: str = "512"
     texture: bool = False            # hunyuan3d 전용. 켜면 VRAM 21GB 추가로 필요
+    texture_only: bool = False       # 기존 mesh_shape.glb 에서 텍스처 단계 재개
     paint_views: int = 6
     paint_resolution: int = 512
 
@@ -392,6 +393,8 @@ def main(argv: list[str] | None = None) -> int:
         "끄면 색이 없어 PCD 가 회색이 된다",
     )
     ap.add_argument("--paint-views", type=int, help="hunyuan3d texture 뷰 수(기본 6)")
+    ap.add_argument("--texture-only", action="store_true",
+                    help="hunyuan3d: 같은 --out 의 mesh_shape.glb 에서 텍스처만 재개")
     ap.add_argument("--paint-resolution", type=int, help="hunyuan3d texture 해상도(기본 512)")
     ap.add_argument(
         "--pipeline-type",
@@ -425,6 +428,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.backend:
         st.backend = args.backend
     if args.texture:
+        st.texture = True
+    if args.texture_only:
+        st.texture_only = True
+    if st.texture_only:
+        if st.backend != "hunyuan3d" or args.skip_generate:
+            ap.error("--texture-only requires hunyuan3d and cannot be combined with --skip-generate")
         st.texture = True
     if args.paint_views:
         st.paint_views = args.paint_views
