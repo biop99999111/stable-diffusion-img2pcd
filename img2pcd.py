@@ -361,7 +361,7 @@ def process_part(part: PartSpec, st: Settings, out_root: Path, backend=None, bas
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="이미지 1장 -> TRELLIS.2 -> PCD (스파이크)")
+    ap = argparse.ArgumentParser(description="이미지 1장 -> 3D 모델 -> PCD (스파이크)")
     ap.add_argument("--config", default="parts.yaml", type=Path)
     ap.add_argument("--out", default="out", type=Path)
     ap.add_argument("--only", help="부품 이름 하나만 처리")
@@ -375,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int)
     ap.add_argument(
         "--backend",
-        choices=["hunyuan3d", "trellis2"],
+        choices=["hunyuan3d", "trellis2", "sf3d"],
         help="생성 백엔드. 기본 hunyuan3d "
         "(trellis2 는 gated 모델 facebook/dinov3-... 승인이 필요하다)",
     )
@@ -383,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--repo-dir",
         help="모델 레포 경로(소스 트리). 미지정 시 자동 탐색 "
-        "(형제 폴더 · $TRELLIS_DIR/$HUNYUAN3D_DIR · /workspace · ~)",
+        "(형제 폴더 · $TRELLIS_DIR/$HUNYUAN3D_DIR/$SF3D_DIR · /workspace · ~)",
     )
     ap.add_argument(
         "--texture",

@@ -1,0 +1,9 @@
+# Separate SDXL environment; no TRELLIS/Hunyuan CUDA extensions required.
+diffusers==0.35.1
+transformers>=4.41,<5
+accelerate>=0.30,<2
+safetensors>=0.4
+huggingface-hub>=0.34,<1
+numpy>=1.26,<2
+pillow>=10,<12
+pyyaml>=6,<7

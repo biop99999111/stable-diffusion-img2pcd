@@ -473,7 +473,10 @@ class Hunyuan3DBackend:
 # ---------------------------------------------------------------- 선택
 
 
-BACKENDS = {"trellis2": Trellis2Backend, "hunyuan3d": Hunyuan3DBackend}
+from sf3d_backend import StableFast3DBackend
+
+BACKENDS = {"trellis2": Trellis2Backend, "hunyuan3d": Hunyuan3DBackend,
+            "sf3d": StableFast3DBackend}
 
 
 def load_backend(st, repo_dir: str | None = None):

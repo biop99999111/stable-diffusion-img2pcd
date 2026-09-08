@@ -1,0 +1,4 @@
+# Upstream pins NumPy 1.26.4; OpenCV 4.12+ requires NumPy 2 on Python 3.10.
+numpy==1.26.4
+opencv-python-headless<4.12
+opencv-python<4.12
