@@ -1,0 +1,5 @@
+# vast.ai(Linux)에서 실행되므로 LF 고정. CRLF 면 bash 가 \r 로 죽는다.
+*.sh text eol=lf
+*.py text eol=lf
+*.yaml text eol=lf
+*.ipynb text eol=lf

@@ -1,0 +1,33 @@
+# 부품 정의 — 이미지 1장 + 실측 치수 1개(mm)
+# TRELLIS.2 출력은 [-0.5, 0.5] 단위 박스로 정규화되어 나온다(= mm 스케일 없음).
+# fit_axis 방향의 실제 치수를 넣어야 mm 좌표가 나온다. auto = bbox 최장축.
+parts:
+  - name: bumper_cover
+    image: inputs/bumper.jpg     # 600x342 — 전면 범퍼 커버, 흰 배경
+    target_mm: 1750              # 승용 범퍼 커버 전폭 대략치 — 실측값으로 교체할 것
+    fit_axis: auto
+
+  - name: hood
+    image: inputs/hood.png       # 1299x1023 — 본네트 외판(앞면), 흰색
+    target_mm: 1500              # 본네트 전폭 대략치 — 실측값으로 교체할 것
+    fit_axis: auto
+
+# inputs/hood_inner.png (1366x1042) = 같은 본네트의 **내판(뒷면)**.
+# 보강재·플랜지·스폿 용접부가 보이는 면이라 spec U-13(내판까지 스캔할 것인가)과
+# FR-18(용접부 위치)의 근거 자료다. 다만 TRELLIS.2 에 넣어도 외판과 하나로 합쳐지지
+# 않고 별개 오브젝트 3D 가 나오므로, 부품으로 등록하지 않고 참고용으로만 둔다.
+# 내판 형상 자체가 필요하면 아래 주석을 풀 것.
+# - name: hood_inner
+#   image: inputs/hood_inner.png
+#   target_mm: 1500
+#   fit_axis: auto
+
+# 공통 설정
+defaults:
+  points: 300000           # 샘플링할 점 개수 (spacing_mm 를 주면 그쪽이 우선)
+  spacing_mm: null         # 예: 0.8 → 점 간격 0.8mm 기준으로 개수 자동 산출
+  smooth_iterations: 0     # Taubin 스무딩 반복. 표면 울렁임이 심하면 5~10
+  texture_size: 2048       # to_glb 텍스처 해상도 (4096 은 VRAM/시간 증가)
+  decimation_target: 500000
+  simplify_target: 16777216
+  single_view: false       # true = hidden point removal 로 3D 카메라 1시점처럼 자름

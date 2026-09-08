@@ -1,0 +1,8 @@
+# TRELLIS.2 본체는 setup_vast.sh 가 설치한다(별도 conda env).
+# 아래는 이 스파이크가 추가로 쓰는 것만.
+trimesh>=4.4
+open3d>=0.18
+matplotlib>=3.8
+pyyaml>=6.0
+pillow>=10.0
+numpy>=1.26
