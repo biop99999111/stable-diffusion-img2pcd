@@ -85,11 +85,18 @@ pip install cython
 # 지원해서 이 env(3.10)에서는 어떤 버전도 못 깐다. pip 는 해결 실패 시 아무것도
 # 설치하지 않으므로 이 한 줄 때문에 전체가 죽는다. shape 생성 경로에는 쓰이지
 # 않으므로 빼고 설치한다(필요해지면 임포트 에러로 드러난다).
-REQ_FILE=requirements.txt
-if grep -q '^bpy' requirements.txt; then
-  REQ_FILE=/tmp/hy_requirements_nobpy.txt
+REQ_FILE=/tmp/hy_requirements_clean.txt
+# requirements.txt 안에 --extra-index-url 로 중국 미러가 적혀 있으면 환경변수나
+# 설정 파일로는 못 지운다. 실측: 미러 경유 1.1 MB/s vs 회선 실측 169 MB/s (150배).
+# 중국 리전이면 PIP_KEEP_MIRRORS=1 로 원본을 그대로 쓴다.
+if [ -n "${PIP_KEEP_MIRRORS:-}" ]; then
   grep -v '^bpy' requirements.txt > "$REQ_FILE"
-  echo "bpy 제외하고 설치 (PyPI 에서 4.0 이 삭제됨 · 4.2.0+ 는 python>=3.11)"
+else
+  grep -v '^bpy' requirements.txt | grep -v 'index-url' > "$REQ_FILE"
+fi
+if ! diff -q requirements.txt "$REQ_FILE" >/dev/null 2>&1; then
+  echo "requirements 조정: bpy 제외(PyPI 에서 4.0 삭제·4.2.0+ 는 python>=3.11)"
+  [ -z "${PIP_KEEP_MIRRORS:-}" ] && echo "                  index-url 줄 제외(미러 스로틀 회피)"
 fi
 pip install -r "$REQ_FILE" --no-build-isolation
 
