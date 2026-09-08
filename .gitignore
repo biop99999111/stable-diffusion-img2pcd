@@ -4,3 +4,5 @@ out/
 __pycache__/
 out_*/
 *.log
+!artifacts/sf3d_bumper_01/bumper_cover/mesh.glb
+!artifacts/sf3d_bumper_01/video/bumper_turntable.mp4

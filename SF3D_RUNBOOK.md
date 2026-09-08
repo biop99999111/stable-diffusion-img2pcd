@@ -86,4 +86,4 @@ scene transform과 여러 geometry/material을 유지하고, 내장 base-color �
 
 2026-09-08: CPU 테스트 24개 통과. 실제 원본 범퍼 dry-run과 합성 GLB(2개 인스턴스, 내장 텍스처, scalar PBR 재질)의 12초 영상 생성·360프레임 디코딩을 확인했다. AMD Radeon 860M에서 4방향 미리보기의 텍스처와 인스턴스 배치도 확인했다. 합성 fixture는 SF3D 추론 결과가 아니다.
 
-RTX 4090 SF3D 설치·가중치 로딩·실제 추론은 아직 검증되지 않았다. 서버 실행 후 `inference.log`, `workflow.json`, 부품 폴더를 수령하여 실제 결과 품질과 영상을 확인해야 한다.
+2026-09-08 실제 RTX 4090 설치·가중치 로딩·범퍼 생성·GLB/PCD 검증을 완료했고 다운로드한 GLB로 12초 영상도 생성했다. 파일 계약은 통과했으나 bbox 형상 FAIL이며 측면·후면 부풀림을 확인했다. 실제 결과와 품질 분석은 [README](README.md#sf3d-실제-범퍼-결과--2026-09-08), 산출물은 [artifacts/sf3d_bumper_01](artifacts/sf3d_bumper_01)에 보존한다. 서버 workflow/validation의 pending_review는 서버 실행 당시 상태이며 이후 육안 검토는 README에 기록했다.

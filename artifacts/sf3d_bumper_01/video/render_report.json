@@ -1,0 +1,18 @@
+{
+  "source": "C:\\Users\\biop9\\Downloads\\stable-diffusion-img2pcd\\stable-diffusion-img2pcd\\out_sf3d_bumper_01\\bumper_cover\\mesh.glb",
+  "source_sha256": "702d14451b99956162134696895ecbf27930d0eb062f5dffaf81c29e58bc6c1b",
+  "renderer": "AMD Radeon(TM) 860M Graphics",
+  "front_angle": 180.0,
+  "instances": 1,
+  "faces": 23112,
+  "camera_distance": 3.987070849792087,
+  "status": "video_verified",
+  "material_scope": "base color, metallic/roughness, OPAQUE/MASK; no normal/occlusion/emissive maps",
+  "decoded_frames": 360,
+  "fps": 30,
+  "duration_seconds": 12.0,
+  "resolution": [
+    1280,
+    720
+  ]
+}

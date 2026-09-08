@@ -1,0 +1,32 @@
+parts:
+- name: bumper_cover
+  image: /workspace/stable-diffusion-img2pcd/inputs/bumper.jpg
+  target_mm: 1750
+  fit_axis: auto
+  expect_mm:
+  - 1750
+  - 450
+  - 350
+defaults:
+  points: 300000
+  spacing_mm: null
+  smooth_iterations: 0
+  texture_size: 1024
+  decimation_target: 500000
+  simplify_target: 16777216
+  single_view: false
+  seed: 42
+  run_kwargs:
+    remesh: none
+  shape_tolerance: 0.3
+  backend: sf3d
+  model_id: null
+  pipeline_type: 1024_cascade
+  max_num_tokens: null
+  rembg_model: null
+  oom_fallback: true
+  oom_fallback_type: '512'
+  texture: false
+  texture_only: false
+  paint_views: 6
+  paint_resolution: 512

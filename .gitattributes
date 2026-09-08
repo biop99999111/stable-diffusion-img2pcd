@@ -3,3 +3,4 @@
 *.py text eol=lf
 *.yaml text eol=lf
 *.ipynb text eol=lf
+artifacts/sf3d_bumper_01/** -text

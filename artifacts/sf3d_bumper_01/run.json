@@ -1,0 +1,87 @@
+[
+  {
+    "part": "bumper_cover",
+    "settings": {
+      "points": 300000,
+      "spacing_mm": null,
+      "smooth_iterations": 0,
+      "texture_size": 1024,
+      "decimation_target": 500000,
+      "simplify_target": 16777216,
+      "single_view": false,
+      "seed": 42,
+      "run_kwargs": {
+        "remesh": "none"
+      },
+      "shape_tolerance": 0.3,
+      "backend": "sf3d",
+      "model_id": "/workspace/.hf_home/hub/models--stabilityai--stable-fast-3d/snapshots/f0c9a8ffd62cb1bbc8a7a53c9f87a0be1b6be778",
+      "pipeline_type": "1024_cascade",
+      "max_num_tokens": null,
+      "rembg_model": null,
+      "oom_fallback": true,
+      "oom_fallback_type": "512",
+      "texture": false,
+      "texture_only": false,
+      "paint_views": 6,
+      "paint_resolution": 512
+    },
+    "spec": {
+      "name": "bumper_cover",
+      "image": "/workspace/stable-diffusion-img2pcd/inputs/bumper.jpg",
+      "target_mm": 1750,
+      "fit_axis": "auto",
+      "expect_mm": [
+        1750,
+        450,
+        350
+      ]
+    },
+    "image": "/workspace/stable-diffusion-img2pcd/inputs/bumper.jpg",
+    "backend": "sf3d",
+    "model_id": "/workspace/.hf_home/hub/models--stabilityai--stable-fast-3d/snapshots/f0c9a8ffd62cb1bbc8a7a53c9f87a0be1b6be778",
+    "textured": true,
+    "t_load_s": 54.128,
+    "t_preprocess_s": 4.944,
+    "t_generate_s": 1.219,
+    "peak_vram_gib": 5.995,
+    "scale_factor": 1817.1381,
+    "bbox_mm": [
+      1750.0,
+      588.43,
+      882.11
+    ],
+    "shape_check": {
+      "expect_mm_sorted": [
+        1750.0,
+        450.0,
+        350.0
+      ],
+      "got_mm_sorted": [
+        1750.0,
+        882.1,
+        588.4
+      ],
+      "ratio": [
+        1.0,
+        1.96,
+        1.68
+      ],
+      "thinnest_axis_ratio": 1.68,
+      "worst_ratio": 1.96,
+      "tolerance": 0.3,
+      "verdict": "FAIL"
+    },
+    "verify": {
+      "path": "/workspace/stable-diffusion-img2pcd/out_sf3d_bumper_01/bumper_cover/bumper_cover.pcd",
+      "point_count": 300000,
+      "has_colors": true,
+      "bbox_mm": [
+        1749.71,
+        588.06,
+        881.71
+      ],
+      "size_mb": 4.58
+    }
+  }
+]

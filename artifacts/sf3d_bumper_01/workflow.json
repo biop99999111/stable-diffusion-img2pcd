@@ -1,0 +1,163 @@
+{
+  "status": "artifacts_validated_video_pending",
+  "input_sha256": "34832200ed35093270c59674e2bf4ca690dd4f07515e890136ec8c8b0ef7f8a5",
+  "model_id": "stabilityai/stable-fast-3d",
+  "requested_revision": "main",
+  "config": {
+    "parts": [
+      {
+        "name": "bumper_cover",
+        "image": "/workspace/stable-diffusion-img2pcd/inputs/bumper.jpg",
+        "target_mm": 1750,
+        "fit_axis": "auto",
+        "expect_mm": [
+          1750,
+          450,
+          350
+        ]
+      }
+    ],
+    "defaults": {
+      "points": 300000,
+      "spacing_mm": null,
+      "smooth_iterations": 0,
+      "texture_size": 1024,
+      "decimation_target": 500000,
+      "simplify_target": 16777216,
+      "single_view": false,
+      "seed": 42,
+      "run_kwargs": {
+        "remesh": "none"
+      },
+      "shape_tolerance": 0.3,
+      "backend": "sf3d",
+      "model_id": null,
+      "pipeline_type": "1024_cascade",
+      "max_num_tokens": null,
+      "rembg_model": null,
+      "oom_fallback": true,
+      "oom_fallback_type": "512",
+      "texture": false,
+      "texture_only": false,
+      "paint_views": 6,
+      "paint_resolution": 512
+    }
+  },
+  "visual_quality": "pending_review",
+  "metrology": "unverified",
+  "environment": {
+    "torch": "2.5.1+cu124",
+    "torch_cuda": "12.4",
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "source_commit": "ff21fc491b4dc5314bf6734c7c0dabd86b5f5bb2",
+    "source_status": "",
+    "nvcc": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Fri_Feb_21_20:23:50_PST_2025\nCuda compilation tools, release 12.8, V12.8.93\nBuild cuda_12.8.r12.8/compiler.35583870_0",
+    "nvidia_smi": "Tue Sep  8 14:37:31 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 590.48.01              Driver Version: 590.48.01      CUDA Version: 13.1     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 4090        On  |   00000000:A1:00.0 Off |                    0 |\n|  0%   43C    P8             25W /  450W |       4MiB /  23028MiB |      0%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|  No running processes found                                                             |\n+-----------------------------------------------------------------------------------------+"
+  },
+  "experiment_commit": "61dfe1159269c6398f3d2b6a99bb4d90a550076c",
+  "experiment_status": "",
+  "model_revision": "f0c9a8ffd62cb1bbc8a7a53c9f87a0be1b6be778",
+  "snapshot_seconds": 190.4127529770485,
+  "command": [
+    "/venv/sf3d-spike/bin/python",
+    "/workspace/stable-diffusion-img2pcd/img2pcd.py",
+    "--config",
+    "/workspace/stable-diffusion-img2pcd/out_sf3d_bumper_01/parts_sf3d.yaml",
+    "--backend",
+    "sf3d",
+    "--repo-dir",
+    "/workspace/stable-fast-3d",
+    "--model",
+    "/workspace/.hf_home/hub/models--stabilityai--stable-fast-3d/snapshots/f0c9a8ffd62cb1bbc8a7a53c9f87a0be1b6be778",
+    "--only",
+    "bumper_cover",
+    "--out",
+    "/workspace/stable-diffusion-img2pcd/out_sf3d_bumper_01"
+  ],
+  "validation": {
+    "passed": true,
+    "errors": [],
+    "warnings": [],
+    "visual_quality": "pending_review",
+    "metrology": "unverified",
+    "glb": {
+      "instances": [
+        {
+          "node": "geometry_0",
+          "vertices": 16040,
+          "faces": 23112,
+          "has_uv": true,
+          "has_texture": true,
+          "texture_size": [
+            1024,
+            1024
+          ]
+        }
+      ],
+      "textured": true
+    },
+    "pcd": {
+      "points": 300000,
+      "has_colors": true,
+      "bbox_mm": [
+        1749.71337890625,
+        588.0622253417969,
+        881.7131958007812
+      ]
+    },
+    "shape_check": {
+      "expect_mm_sorted": [
+        1750.0,
+        450.0,
+        350.0
+      ],
+      "got_mm_sorted": [
+        1750.0,
+        882.1,
+        588.4
+      ],
+      "ratio": [
+        1.0,
+        1.96,
+        1.68
+      ],
+      "thinnest_axis_ratio": 1.68,
+      "worst_ratio": 1.96,
+      "tolerance": 0.3,
+      "verdict": "FAIL"
+    }
+  },
+  "metrics": {
+    "bbox_mm": [
+      1750.0,
+      588.43,
+      882.11
+    ],
+    "shape_check": {
+      "expect_mm_sorted": [
+        1750.0,
+        450.0,
+        350.0
+      ],
+      "got_mm_sorted": [
+        1750.0,
+        882.1,
+        588.4
+      ],
+      "ratio": [
+        1.0,
+        1.96,
+        1.68
+      ],
+      "thinnest_axis_ratio": 1.68,
+      "worst_ratio": 1.96,
+      "tolerance": 0.3,
+      "verdict": "FAIL"
+    },
+    "t_load_s": 54.128,
+    "t_preprocess_s": 4.944,
+    "t_generate_s": 1.219,
+    "peak_vram_gib": 5.995
+  },
+  "elapsed_seconds": 267.284
+}
