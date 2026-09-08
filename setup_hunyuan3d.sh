@@ -26,6 +26,20 @@ fi
 echo "CUDA_HOME=${CUDA_HOME:-(unset)}"
 
 echo
+echo "=== 0-1. pip 인덱스 정리 ==="
+# vast.ai 이미지/Hunyuan3D 설정에 중국 미러(mirrors.cloud.tencent.com,
+# mirrors.aliyun.com)가 extra-index-url 로 걸려 있으면, 중국 밖 호스트에서는
+# 응답이 몇 분씩 멈춘다(실측: basicsr 빌드 의존성 설치에서 무한 정지).
+# PyPI 만 쓰도록 덮어쓴다. 중국 리전이면 PIP_KEEP_MIRRORS=1 로 이 절을 건너뛴다.
+if [ -z "${PIP_KEEP_MIRRORS:-}" ]; then
+  export PIP_INDEX_URL="https://pypi.org/simple"
+  export PIP_EXTRA_INDEX_URL=""
+  export PIP_DEFAULT_TIMEOUT=30
+  export PIP_RETRIES=3
+  echo "PIP_INDEX_URL=$PIP_INDEX_URL (extra-index 비움)"
+fi
+
+echo
 echo "=== 1. conda 훅 로드 ==="
 # 비대화형 서브셸에서는 conda activate 가 그냥은 안 된다.
 command -v conda >/dev/null 2>&1 || { echo "!! conda 없음"; exit 1; }
@@ -60,7 +74,10 @@ pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 \
 
 echo
 echo "=== 5. requirements ==="
-pip install -r requirements.txt
+# basicsr 은 소스 tarball 이라 빌드 격리 환경이 torch 를 **다시** 내려받는다(~2.5GB).
+# env 에 이미 torch 2.5.1 이 있으므로 격리를 끄고 그걸 재사용한다.
+pip install cython
+pip install -r requirements.txt --no-build-isolation
 
 echo
 echo "=== 6. texture 확장 빌드 (실패해도 shape 는 돈다) ==="
