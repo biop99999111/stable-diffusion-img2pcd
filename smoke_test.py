@@ -59,8 +59,8 @@ def main() -> int:
 
     make_fake_glb(out_root / part.name / "mesh.glb")
 
-    # pipeline=None -> 생성 단계 건너뛰고 기존 GLB 사용
-    manifest = img2pcd.process_part(part, st, out_root, pipeline=None)
+    # backend=None -> 생성 단계 건너뛰고 기존 GLB 사용
+    manifest = img2pcd.process_part(part, st, out_root, backend=None)
 
     checks: list[tuple[str, bool, str]] = []
     v = manifest["verify"]

@@ -62,9 +62,14 @@ class Settings:
     decimation_target: int = 500_000
     simplify_target: int = 16_777_216
     single_view: bool = False
-    model_id: str = "microsoft/TRELLIS.2-4B"
     seed: int | None = 42
     run_kwargs: dict = field(default_factory=dict)
+    # 생성 백엔드 (backends.py)
+    backend: str = "hunyuan3d"       # trellis2 | hunyuan3d
+    model_id: str | None = None      # None 이면 백엔드 기본값
+    texture: bool = False            # hunyuan3d 전용. 켜면 VRAM 21GB 추가로 필요
+    paint_views: int = 6
+    paint_resolution: int = 512
 
 
 def load_config(path: Path) -> tuple[list[PartSpec], Settings]:
@@ -82,141 +87,8 @@ def load_config(path: Path) -> tuple[list[PartSpec], Settings]:
 
 
 # ---------------------------------------------------------------- 1~2단계 (GPU)
-
-
-def find_trellis_dir(explicit: str | None = None) -> Path | None:
-    """TRELLIS.2 레포 위치를 찾는다.
-
-    `trellis2` 는 pip 패키지가 아니라 TRELLIS.2 레포 안의 **소스 디렉터리**다
-    (공식 example.py 는 레포 루트에서 실행하는 걸 전제한다). 그래서 이 스크립트를
-    다른 폴더에서 돌리면 ModuleNotFoundError 가 난다 — sys.path 에 직접 넣어준다.
-    """
-    candidates: list[Path] = []
-    if explicit:
-        candidates.append(Path(explicit))
-    if os.environ.get("TRELLIS_DIR"):
-        candidates.append(Path(os.environ["TRELLIS_DIR"]))
-    here = Path(__file__).resolve().parent
-    candidates += [
-        here.parent / "TRELLIS.2",      # 이 레포의 형제 폴더(setup_vast.sh 기본값)
-        Path("/workspace/TRELLIS.2"),
-        Path.home() / "TRELLIS.2",
-        here / "TRELLIS.2",
-    ]
-    for c in candidates:
-        if (c / "trellis2").is_dir():
-            return c.resolve()
-    return None
-
-
-def load_pipeline(model_id: str, trellis_dir: str | None = None):
-    """TRELLIS.2 파이프라인 로드. trellis2 소스가 sys.path 에 있어야 한다."""
-    try:
-        import trellis2  # noqa: F401
-    except ImportError:
-        found = find_trellis_dir(trellis_dir)
-        if found is None:
-            raise SystemExit(
-                "trellis2 를 찾을 수 없습니다.\n"
-                "  trellis2 는 pip 패키지가 아니라 TRELLIS.2 레포 안의 소스 디렉터리입니다.\n"
-                "  경로를 지정하세요:\n"
-                "    python img2pcd.py --trellis-dir /workspace/TRELLIS.2 ...\n"
-                "  또는  export TRELLIS_DIR=/workspace/TRELLIS.2"
-            ) from None
-        sys.path.insert(0, str(found))
-        print(f"[gen] sys.path 에 TRELLIS.2 추가: {found}")
-
-    import torch
-    from trellis2.pipelines import Trellis2ImageTo3DPipeline
-
-    print(f"[gen] loading {model_id} ...")
-    t0 = time.time()
-    pipeline = Trellis2ImageTo3DPipeline.from_pretrained(model_id)
-    pipeline.cuda()
-    print(f"[gen] loaded in {time.time() - t0:.1f}s")
-    print(f"[gen] pipeline.run signature: {inspect.signature(pipeline.run)}")
-    print(f"[gen] cuda mem allocated: {torch.cuda.memory_allocated() / 2**30:.2f} GiB")
-    return pipeline
-
-
-def _accepted_kwargs(fn, wanted: dict) -> dict:
-    """run() 이 실제로 받는 인자만 남긴다.
-
-    TRELLIS.2 공식 example.py 는 run(image) 만 쓴다. seed/resolution 류 인자 이름이
-    버전마다 다를 수 있어 시그니처를 보고 걸러낸다(틀린 이름으로 죽는 것 방지).
-    """
-    try:
-        params = inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        return {}
-    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
-        return dict(wanted)
-    ok = {k: v for k, v in wanted.items() if k in params}
-    dropped = set(wanted) - set(ok)
-    if dropped:
-        print(f"[gen] run() 이 안 받는 인자 제외: {sorted(dropped)}")
-    return ok
-
-
-def generate_glb(pipeline, image_path: Path, out_glb: Path, st: Settings) -> dict:
-    """이미지 -> 메시 -> GLB. 소요 시간과 VRAM 피크를 반환."""
-    import o_voxel
-    import torch
-    from PIL import Image
-
-    image = Image.open(image_path)
-    if image.mode not in ("RGB", "RGBA"):
-        image = image.convert("RGB")
-    print(f"[gen] {image_path.name} {image.size} {image.mode}")
-
-    wanted: dict = {}
-    if st.seed is not None:
-        wanted["seed"] = st.seed
-    wanted.update(st.run_kwargs)
-    kwargs = _accepted_kwargs(pipeline.run, wanted)
-
-    torch.cuda.reset_peak_memory_stats()
-    t0 = time.time()
-    mesh = pipeline.run(image, **kwargs)[0]
-    t_gen = time.time() - t0
-    print(f"[gen] mesh in {t_gen:.1f}s")
-
-    if st.simplify_target:
-        mesh.simplify(st.simplify_target)
-
-    t1 = time.time()
-    glb = o_voxel.postprocess.to_glb(
-        vertices=mesh.vertices,
-        faces=mesh.faces,
-        attr_volume=mesh.attrs,
-        coords=mesh.coords,
-        attr_layout=mesh.layout,
-        voxel_size=mesh.voxel_size,
-        aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
-        decimation_target=st.decimation_target,
-        texture_size=st.texture_size,
-        remesh=True,
-        remesh_band=1,
-        remesh_project=0,
-        verbose=True,
-    )
-    t_glb = time.time() - t1
-    out_glb.parent.mkdir(parents=True, exist_ok=True)
-    glb.export(str(out_glb), extension_webp=True)
-    print(f"[gen] glb in {t_glb:.1f}s -> {out_glb}")
-
-    peak = torch.cuda.max_memory_allocated() / 2**30
-    # 이슈 #188: 샘플링 중간 텐서가 남아 메시 후처리에서 24GB 급이 터진다.
-    # 부품을 여러 개 돌리므로 부품 사이에서 확실히 비운다.
-    del mesh, glb
-    torch.cuda.empty_cache()
-    print(f"[gen] peak cuda mem: {peak:.2f} GiB (empty_cache 완료)")
-    return {
-        "t_generate_s": round(t_gen, 2),
-        "t_glb_s": round(t_glb, 2),
-        "peak_vram_gib": round(peak, 2),
-    }
-
+# 생성 백엔드는 backends.py 로 분리했다(trellis2 / hunyuan3d).
+# 여기부터는 백엔드가 만든 GLB 하나만 있으면 되므로 모델과 무관하다.
 
 # ---------------------------------------------------------------- 3~5단계 (CPU)
 
@@ -392,7 +264,7 @@ def preview_png(pcd, path: Path, title: str, max_points: int = 60_000):
 # ---------------------------------------------------------------- 부품 1개 처리
 
 
-def process_part(part: PartSpec, st: Settings, out_root: Path, pipeline=None, base_dir: Path | None = None) -> dict:
+def process_part(part: PartSpec, st: Settings, out_root: Path, backend=None, base_dir: Path | None = None) -> dict:
     print(f"\n{'=' * 60}\n[part] {part.name}\n{'=' * 60}")
     base_dir = base_dir or Path.cwd()
     out_dir = out_root / part.name
@@ -400,14 +272,14 @@ def process_part(part: PartSpec, st: Settings, out_root: Path, pipeline=None, ba
     glb_path = out_dir / "mesh.glb"
     manifest: dict = {"part": part.name, "settings": asdict(st), "spec": asdict(part)}
 
-    if pipeline is not None:
+    if backend is not None:
         image_path = Path(part.image)
         if not image_path.is_absolute():
             image_path = (base_dir / part.image).resolve()
         if not image_path.exists():
             raise FileNotFoundError(f"입력 이미지 없음: {image_path}")
         manifest["image"] = str(image_path)
-        manifest.update(generate_glb(pipeline, image_path, glb_path, st))
+        manifest.update(backend.generate(image_path, glb_path, st))
     else:
         if not glb_path.exists():
             raise FileNotFoundError(f"--skip-generate 인데 GLB 가 없음: {glb_path}")
@@ -454,12 +326,26 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--single-view", action="store_true")
     ap.add_argument("--smooth", type=int, help="Taubin 반복 횟수")
     ap.add_argument("--seed", type=int)
-    ap.add_argument("--model", help="기본 microsoft/TRELLIS.2-4B")
     ap.add_argument(
-        "--trellis-dir",
-        help="TRELLIS.2 레포 경로(trellis2 소스가 있는 곳). 미지정 시 자동 탐색 "
-        "(형제 폴더 · $TRELLIS_DIR · /workspace/TRELLIS.2 · ~/TRELLIS.2)",
+        "--backend",
+        choices=["hunyuan3d", "trellis2"],
+        help="생성 백엔드. 기본 hunyuan3d "
+        "(trellis2 는 gated 모델 facebook/dinov3-... 승인이 필요하다)",
     )
+    ap.add_argument("--model", help="모델 ID. 미지정 시 백엔드 기본값")
+    ap.add_argument(
+        "--repo-dir",
+        help="모델 레포 경로(소스 트리). 미지정 시 자동 탐색 "
+        "(형제 폴더 · $TRELLIS_DIR/$HUNYUAN3D_DIR · /workspace · ~)",
+    )
+    ap.add_argument(
+        "--texture",
+        action="store_true",
+        help="hunyuan3d: PBR 텍스처까지 생성(VRAM 21GB 추가·느림). "
+        "끄면 색이 없어 PCD 가 회색이 된다",
+    )
+    ap.add_argument("--paint-views", type=int, help="hunyuan3d texture 뷰 수(기본 6)")
+    ap.add_argument("--paint-resolution", type=int, help="hunyuan3d texture 해상도(기본 512)")
     ap.add_argument("--run-kwargs", help="run() 추가 인자 JSON")
     args = ap.parse_args(argv)
 
@@ -477,6 +363,14 @@ def main(argv: list[str] | None = None) -> int:
         st.seed = args.seed
     if args.model:
         st.model_id = args.model
+    if args.backend:
+        st.backend = args.backend
+    if args.texture:
+        st.texture = True
+    if args.paint_views:
+        st.paint_views = args.paint_views
+    if args.paint_resolution:
+        st.paint_resolution = args.paint_resolution
     if args.run_kwargs:
         st.run_kwargs = json.loads(args.run_kwargs)
     if args.only:
@@ -487,11 +381,15 @@ def main(argv: list[str] | None = None) -> int:
     out_root = args.out.resolve()
     out_root.mkdir(parents=True, exist_ok=True)
 
-    pipeline = None if args.skip_generate else load_pipeline(st.model_id, args.trellis_dir)
+    backend = None
+    if not args.skip_generate:
+        from backends import load_backend
+
+        backend = load_backend(st, args.repo_dir)
 
     results = []
     for part in parts:
-        results.append(process_part(part, st, out_root, pipeline, base_dir=config_path.parent))
+        results.append(process_part(part, st, out_root, backend, base_dir=config_path.parent))
 
     summary = out_root / "run.json"
     summary.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")

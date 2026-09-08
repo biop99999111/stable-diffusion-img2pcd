@@ -31,3 +31,13 @@ defaults:
   decimation_target: 500000
   simplify_target: 16777216
   single_view: false       # true = hidden point removal 로 3D 카메라 1시점처럼 자름
+
+  # 생성 백엔드
+  backend: hunyuan3d       # hunyuan3d | trellis2
+                           #   hunyuan3d = gated 의존성 없음. 바로 돈다
+                           #   trellis2  = 품질 최상위지만 facebook/dinov3-... 가
+                           #               gated:manual 이라 Meta 수동 승인 필요
+  texture: false           # hunyuan3d 전용. true 면 PBR 텍스처까지(VRAM 21GB·느림).
+                           # false 면 색이 없어 PCD rgb 가 회색이 된다
+  paint_views: 6
+  paint_resolution: 512
