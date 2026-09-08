@@ -16,6 +16,26 @@ ROOT = Path(__file__).resolve().parent
 MODEL = "stabilityai/stable-fast-3d"
 
 
+def download_snapshot(revision, attempts=6):
+    """Retry interrupted streams against the same revision and partial cache."""
+    from huggingface_hub import snapshot_download
+    from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout
+    for attempt in range(1, attempts + 1):
+        print(f"[download] attempt {attempt}/{attempts}; revision={revision}; resuming cached data", flush=True)
+        try:
+            path = snapshot_download(MODEL, revision=revision, max_workers=1,
+                                     allow_patterns=["config.yaml", "model.safetensors"])
+            print("[download] snapshot complete", flush=True)
+            return path
+        except (ChunkedEncodingError, ConnectionError, Timeout) as exc:
+            if attempt == attempts:
+                raise
+            delay = min(5 * attempt, 30)
+            # Do not print request URLs or headers; preserve auth-related failures.
+            print(f"[download] {type(exc).__name__}; retry in {delay}s; partial cache preserved", flush=True)
+            time.sleep(delay)
+
+
 def save(path, value):
     Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -107,12 +127,13 @@ def main():
         (out / "freeze.txt").write_text(command_info([sys.executable, "-m", "pip", "freeze"]), encoding="utf-8")
         report["experiment_commit"] = command_info(["git", "rev-parse", "HEAD"], ROOT)
         report["experiment_status"] = command_info(["git", "status", "--porcelain"], ROOT)
-        from huggingface_hub import HfApi, snapshot_download
+        from huggingface_hub import HfApi
         revision = HfApi().model_info(MODEL, revision=args.revision).sha
         report["model_revision"] = revision
         download_start = time.perf_counter()
-        model_path = snapshot_download(MODEL, revision=revision,
-                                       allow_patterns=["config.yaml", "model.safetensors"])
+        report["status"] = "downloading"
+        save(out / "workflow.json", report)
+        model_path = download_snapshot(revision)
         report["snapshot_seconds"] = time.perf_counter() - download_start
         command = [sys.executable, str(ROOT / "img2pcd.py"), "--config", str(cfg),
                    "--backend", "sf3d", "--repo-dir", str(args.repo_dir.resolve()),
