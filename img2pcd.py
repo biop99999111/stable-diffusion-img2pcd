@@ -84,8 +84,48 @@ def load_config(path: Path) -> tuple[list[PartSpec], Settings]:
 # ---------------------------------------------------------------- 1~2단계 (GPU)
 
 
-def load_pipeline(model_id: str):
-    """TRELLIS.2 파이프라인 로드. trellis2 가 설치된 env 에서만 된다."""
+def find_trellis_dir(explicit: str | None = None) -> Path | None:
+    """TRELLIS.2 레포 위치를 찾는다.
+
+    `trellis2` 는 pip 패키지가 아니라 TRELLIS.2 레포 안의 **소스 디렉터리**다
+    (공식 example.py 는 레포 루트에서 실행하는 걸 전제한다). 그래서 이 스크립트를
+    다른 폴더에서 돌리면 ModuleNotFoundError 가 난다 — sys.path 에 직접 넣어준다.
+    """
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(Path(explicit))
+    if os.environ.get("TRELLIS_DIR"):
+        candidates.append(Path(os.environ["TRELLIS_DIR"]))
+    here = Path(__file__).resolve().parent
+    candidates += [
+        here.parent / "TRELLIS.2",      # 이 레포의 형제 폴더(setup_vast.sh 기본값)
+        Path("/workspace/TRELLIS.2"),
+        Path.home() / "TRELLIS.2",
+        here / "TRELLIS.2",
+    ]
+    for c in candidates:
+        if (c / "trellis2").is_dir():
+            return c.resolve()
+    return None
+
+
+def load_pipeline(model_id: str, trellis_dir: str | None = None):
+    """TRELLIS.2 파이프라인 로드. trellis2 소스가 sys.path 에 있어야 한다."""
+    try:
+        import trellis2  # noqa: F401
+    except ImportError:
+        found = find_trellis_dir(trellis_dir)
+        if found is None:
+            raise SystemExit(
+                "trellis2 를 찾을 수 없습니다.\n"
+                "  trellis2 는 pip 패키지가 아니라 TRELLIS.2 레포 안의 소스 디렉터리입니다.\n"
+                "  경로를 지정하세요:\n"
+                "    python img2pcd.py --trellis-dir /workspace/TRELLIS.2 ...\n"
+                "  또는  export TRELLIS_DIR=/workspace/TRELLIS.2"
+            ) from None
+        sys.path.insert(0, str(found))
+        print(f"[gen] sys.path 에 TRELLIS.2 추가: {found}")
+
     import torch
     from trellis2.pipelines import Trellis2ImageTo3DPipeline
 
@@ -415,6 +455,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--smooth", type=int, help="Taubin 반복 횟수")
     ap.add_argument("--seed", type=int)
     ap.add_argument("--model", help="기본 microsoft/TRELLIS.2-4B")
+    ap.add_argument(
+        "--trellis-dir",
+        help="TRELLIS.2 레포 경로(trellis2 소스가 있는 곳). 미지정 시 자동 탐색 "
+        "(형제 폴더 · $TRELLIS_DIR · /workspace/TRELLIS.2 · ~/TRELLIS.2)",
+    )
     ap.add_argument("--run-kwargs", help="run() 추가 인자 JSON")
     args = ap.parse_args(argv)
 
@@ -442,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
     out_root = args.out.resolve()
     out_root.mkdir(parents=True, exist_ok=True)
 
-    pipeline = None if args.skip_generate else load_pipeline(st.model_id)
+    pipeline = None if args.skip_generate else load_pipeline(st.model_id, args.trellis_dir)
 
     results = []
     for part in parts:
