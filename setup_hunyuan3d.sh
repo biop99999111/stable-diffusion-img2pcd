@@ -80,7 +80,18 @@ echo "=== 5. requirements ==="
 # basicsr 은 소스 tarball 이라 빌드 격리 환경이 torch 를 **다시** 내려받는다(~2.5GB).
 # env 에 이미 torch 2.5.1 이 있으므로 격리를 끄고 그걸 재사용한다.
 pip install cython
-pip install -r requirements.txt --no-build-isolation
+
+# bpy==4.0 은 PyPI 에서 내려갔다. 남아 있는 최소 버전은 4.2.0 이고 python>=3.11 만
+# 지원해서 이 env(3.10)에서는 어떤 버전도 못 깐다. pip 는 해결 실패 시 아무것도
+# 설치하지 않으므로 이 한 줄 때문에 전체가 죽는다. shape 생성 경로에는 쓰이지
+# 않으므로 빼고 설치한다(필요해지면 임포트 에러로 드러난다).
+REQ_FILE=requirements.txt
+if grep -q '^bpy' requirements.txt; then
+  REQ_FILE=/tmp/hy_requirements_nobpy.txt
+  grep -v '^bpy' requirements.txt > "$REQ_FILE"
+  echo "bpy 제외하고 설치 (PyPI 에서 4.0 이 삭제됨 · 4.2.0+ 는 python>=3.11)"
+fi
+pip install -r "$REQ_FILE" --no-build-isolation
 
 echo
 echo "=== 6. texture 확장 빌드 (실패해도 shape 는 돈다) ==="
