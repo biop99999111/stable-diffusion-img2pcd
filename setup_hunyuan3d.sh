@@ -125,7 +125,7 @@ fi
 
 echo
 echo "=== 8. 스파이크 의존성 + Jupyter 커널 ==="
-pip install -r "$SPIKE_DIR/requirements.txt"
+pip install -r "$SPIKE_DIR/requirements-hunyuan3d.txt"
 pip install ipykernel
 python -m ipykernel install --user --name "$ENV_NAME" --display-name "Python ($ENV_NAME)"
 
@@ -158,7 +158,7 @@ except Exception as e:
     print(f"  WARN  hy3dpaint: {e}")
     print("        -> shape-only 는 정상 동작합니다(--texture 만 불가)")
 
-for m in ("trimesh", "open3d", "yaml", "matplotlib"):
+for m in ("numpy", "onnxruntime", "rembg", "trimesh", "open3d", "yaml", "matplotlib"):
     try:
         __import__(m)
         print(f"  OK    {m}")
@@ -167,6 +167,7 @@ for m in ("trimesh", "open3d", "yaml", "matplotlib"):
         missing.append(m)
 
 print("\n=> shape 실행 가능" if not missing else f"\n=> 실패: {missing}")
+raise SystemExit(1 if missing else 0)
 PY
 
 cat <<EOF
