@@ -326,6 +326,29 @@ class Trellis2Backend:
 # ---------------------------------------------------------------- Hunyuan3D-2.1
 
 
+def _patch_basicsr_torchvision() -> None:
+    """BasicSR 1.4.2 imports a removed torchvision module for one function.
+
+    Use the public implementation without modifying installed packages or
+    replacing an existing legacy module. Unrelated import failures propagate.
+    """
+    import importlib
+    import types
+
+    legacy = "torchvision.transforms.functional_tensor"
+    try:
+        importlib.import_module(legacy)
+        return
+    except ModuleNotFoundError as exc:
+        if exc.name != legacy:
+            raise
+    functional = importlib.import_module("torchvision.transforms.functional")
+    shim = types.ModuleType(legacy)
+    shim.rgb_to_grayscale = functional.rgb_to_grayscale
+    sys.modules[legacy] = shim
+    print("[compat] BasicSR rgb_to_grayscale -> torchvision.transforms.functional")
+
+
 class Hunyuan3DBackend:
     name = "hunyuan3d"
     default_model = "tencent/Hunyuan3D-2.1"
@@ -375,6 +398,7 @@ class Hunyuan3DBackend:
 
     @staticmethod
     def _texture_api():
+        _patch_basicsr_torchvision()
         try:
             import bpy  # noqa: F401
         except ImportError as exc:

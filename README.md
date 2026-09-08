@@ -98,6 +98,11 @@ python img2pcd.py --config out_sd_bumper_01/parts_sd.yaml --texture-only --out o
 
 ### CPU 검사
 
+BasicSR 1.4.2는 삭제된 `torchvision.transforms.functional_tensor` 경로를 참조합니다.
+Hunyuan 텍스처 실행 시 해당 모듈이 없는 경우에만 공개 API의 `rgb_to_grayscale`에 연결합니다.
+설치 패키지나 torch/torchvision 버전은 변경하지 않습니다.
+`python -m unittest test_basicsr_compat -v`로 import 호환 동작 3개를 검증합니다.
+
 ```bash
 python -m unittest test_sd_spike -v
 python smoke_test.py
