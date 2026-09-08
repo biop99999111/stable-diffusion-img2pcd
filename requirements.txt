@@ -6,3 +6,11 @@ matplotlib>=3.8
 pyyaml>=6.0
 pillow>=10.0
 numpy>=1.26
+
+# TRELLIS.2 의 setup.sh 는 transformers 를 핀 없이 깐다. 오늘 설치하면 5.x 가
+# 들어오는데, 5.x 는 DINOv3ViTModel 의 블록을 encoder 하위로 옮겨서 원본 코드가
+# `'DINOv3ViTModel' object has no attribute 'layer'` 로 죽는다(업스트림 #147).
+# backends.py 에 양쪽을 다 타는 패치가 있지만, 기본은 검증된 4.57.x 로 고정한다.
+# 이 파일은 setup.sh 다음에 설치되므로 5.x 가 깔렸어도 여기서 내려간다.
+transformers>=4.56,<5
+huggingface_hub>=0.26      # prefetch_models.py

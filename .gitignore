@@ -1,3 +1,6 @@
 out/
 *.glb
 *.mp4
+__pycache__/
+out_*/
+*.log

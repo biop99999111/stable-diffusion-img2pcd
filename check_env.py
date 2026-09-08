@@ -20,12 +20,36 @@ import sys
 import urllib.error
 import urllib.request
 
+# --hf 는 로컬 Windows 콘솔(cp949)에서도 돌린다. 한글/em dash 로 죽지 않게.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 
-# TRELLIS.2 가 이미지 인코더로 쓰는 gated 모델. 여기 접근이 안 되면 파이프라인
-# 로드가 401 로 죽는다 — 15GB 받고 나서가 아니라 여기서 먼저 걸러낸다.
-GATED_REPO = "facebook/dinov3-vitl16-pretrain-lvd1689m"
-GATED_URL = f"https://huggingface.co/{GATED_REPO}/resolve/main/config.json"
+# TRELLIS.2 파이프라인이 실제로 받는 레포 전부.
+# pipeline.json 을 그대로 옮긴 것이라 하나라도 막히면 from_pretrained 가 죽는다.
+# 15GB 받고 나서가 아니라 여기서 먼저 걸러낸다.
+#
+#   (repo, 확인용 파일, 대략 크기 GiB, gated 여부, 용도)
+HF_REPOS = [
+    ("microsoft/TRELLIS.2-4B", "pipeline.json", 14.3, False, "본체 가중치 8종"),
+    ("microsoft/TRELLIS-image-large", "pipeline.json", 0.14, False,
+     "pipeline.json 이 참조하는 v1 sparse structure decoder"),
+    ("facebook/dinov3-vitl16-pretrain-lvd1689m", "config.json", 1.13, True,
+     "이미지 인코더 (gated: manual — Meta 수동 승인)"),
+    ("briaai/RMBG-2.0", "config.json", 0.82, True,
+     "배경 제거 (gated: auto — 약관 동의만 하면 즉시 · 비상업 라이선스)"),
+]
+# gated 레포별 안내. 승인 절차가 다르다(manual = 대기, auto = 즉시).
+GATED_HINT = {
+    "facebook/dinov3-vitl16-pretrain-lvd1689m":
+        "Meta 수동 승인(gated: manual). 승인까지 시간이 걸린다",
+    "briaai/RMBG-2.0":
+        "약관 동의 즉시 통과(gated: auto). 페이지에서 Agree 만 누르면 된다",
+}
 HF_TOKEN_VARS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACEHUB_API_TOKEN")
 results: list[tuple[str, str, str]] = []
 
@@ -134,58 +158,87 @@ def check_torch() -> None:
     add(PASS, "torch(현재)", f"{torch.__version__} · cuda={torch.cuda.is_available()} (참고용)")
 
 
-def check_hf_gated() -> None:
-    """gated 모델(DINOv3) 접근 가능 여부를 실제 HTTP 요청으로 확인한다.
+def _hf_token() -> str | None:
+    return next((os.environ[v] for v in HF_TOKEN_VARS if os.environ.get(v)), None)
 
-    TRELLIS.2 는 이미지 인코더로 이 모델을 쓴다. 승인/토큰이 없으면
-    Trellis2ImageTo3DPipeline.from_pretrained 가 401 GatedRepoError 로 죽는다.
+
+def _probe_repo(repo: str, probe_file: str, token: str | None) -> tuple[int | None, str]:
+    """레포의 파일 하나를 실제로 요청해 접근 가능한지 본다.
+
+    메타데이터 API 는 gated 레포도 익명으로 200 을 주므로 판정에 쓸 수 없다.
+    resolve/ 경로만이 실제 다운로드와 같은 권한 검사를 탄다.
     """
-    token = next((os.environ[v] for v in HF_TOKEN_VARS if os.environ.get(v)), None)
+    req = urllib.request.Request(f"https://huggingface.co/{repo}/resolve/main/{probe_file}")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            return resp.status, ""
+    except urllib.error.HTTPError as e:
+        return e.code, e.reason or ""
+    except Exception as e:  # 네트워크 차단·DNS 실패 등
+        return None, f"{type(e).__name__}"
+
+
+def check_hf_repos() -> None:
+    """파이프라인이 받는 레포 4곳을 전부 확인한다.
+
+    DINOv3 하나만 봐도 되던 시절의 검사로는 briaai/RMBG-2.0 (배경 제거, gated:auto)
+    에서 똑같이 401 로 죽는다. pipeline.json 에 박혀 있어 우회할 수 없다.
+    """
+    token = _hf_token()
     add(
         PASS if token else WARN,
         "HF 토큰",
         f"{next(v for v in HF_TOKEN_VARS if os.environ.get(v))} 설정됨"
         if token
-        else "미설정 — gated 모델 접근과 다운로드 속도에 필요",
+        else "미설정 — gated 레포 2곳 접근에 반드시 필요",
     )
 
-    req = urllib.request.Request(GATED_URL)
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            ok = resp.status == 200
-        add(PASS if ok else WARN, f"gated 접근 ({GATED_REPO})", f"HTTP {resp.status}")
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
-            add(
-                FAIL,
-                f"gated 접근 ({GATED_REPO})",
-                f"HTTP {e.code} — 약관 동의 + 토큰 필요 (아래 안내 참조)",
-            )
+    total = 0.0
+    for repo, probe, size_gib, gated, purpose in HF_REPOS:
+        status, extra = _probe_repo(repo, probe, token)
+        label = f"HF {repo}"
+        detail = f"{size_gib:.2f} GiB · {purpose}"
+        if status == 200:
+            total += size_gib
+            add(PASS, label, detail)
+        elif status in (401, 403):
+            add(FAIL, label, f"HTTP {status} — 접근 불가 · {purpose}")
+        elif status is None:
+            add(WARN, label, f"확인 불가(네트워크: {extra}) · {purpose}")
         else:
-            add(WARN, f"gated 접근 ({GATED_REPO})", f"HTTP {e.code} — 판정 보류")
-    except Exception as e:  # 네트워크 차단·DNS 실패 등
-        add(WARN, f"gated 접근 ({GATED_REPO})", f"확인 불가(네트워크): {type(e).__name__}")
+            add(WARN, label, f"HTTP {status} {extra} — 판정 보류 · {purpose}")
+
+    add(
+        PASS if total > 16 else WARN,
+        "다운로드 합계",
+        f"{total:.1f} GiB (접근 가능한 것만) — 전부 받으면 16.4 GiB",
+    )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    # --hf: HF 접근만 본다. GPU 없는 로컬(Windows 포함)에서 토큰·승인 상태만
+    # 확인할 때 쓴다. OS/GPU FAIL 이 섞이지 않아 판정이 분명하다.
+    hf_only = "--hf" in (argv if argv is not None else sys.argv[1:])
+
     print("=" * 72)
-    print("TRELLIS.2 실행 환경 진단")
+    print("HF 모델 접근 진단" if hf_only else "TRELLIS.2 실행 환경 진단")
     print("=" * 72)
 
-    check_os()
-    check_gpu()
-    check_nvcc()
-    check_cuda_home()
-    check_disk()
-    check_python()
-    check_torch()
-    check_tool("conda", "conda", FAIL, "setup.sh --new-env 가 conda 를 쓴다")
-    check_tool("git", "git", FAIL)
-    check_tool("gcc", "gcc", FAIL, "CUDA 확장 소스 빌드에 필요")
-    check_tool("ninja", "ninja", WARN, "없어도 setup.sh --basic 이 설치한다")
-    check_hf_gated()
+    if not hf_only:
+        check_os()
+        check_gpu()
+        check_nvcc()
+        check_cuda_home()
+        check_disk()
+        check_python()
+        check_torch()
+        check_tool("conda", "conda", FAIL, "setup.sh --new-env 가 conda 를 쓴다")
+        check_tool("git", "git", FAIL)
+        check_tool("gcc", "gcc", FAIL, "CUDA 확장 소스 빌드에 필요")
+        check_tool("ninja", "ninja", WARN, "없어도 setup.sh --basic 이 설치한다")
+    check_hf_repos()
 
     print()
     width = max(len(n) for _, n, _ in results)
@@ -206,41 +259,46 @@ def main() -> int:
         "conda": ["miniforge/miniconda 를 설치하거나 conda 가 있는 이미지를 쓴다"],
         "gcc": ["apt install -y build-essential"],
         "OS": ["TRELLIS.2 는 Linux 전용 — Linux 인스턴스가 필요하다"],
-        "gated 접근": [],  # 아래에서 401/403 을 구분해 채운다
     }
 
-    print("\n" + "=" * 72)
+    print()
+    print("=" * 72)
     if fails:
         print(f"FAIL {fails}건 · WARN {warns}건 — 이대로 진행하면 도중에 깨집니다.")
         for name in failed_names:
+            if name.startswith("HF "):
+                _print_hf_hint(name.removeprefix("HF "), failed_details[name])
+                continue
             key = next((k for k in hints if name.startswith(k)), None)
             if key is None:
                 continue
-            if key == "gated 접근":
-                # 401(미인증) 과 403(인증됐으나 미승인) 은 대처가 다르다.
-                detail = failed_details[name]
-                print(f"  · {name}")
-                if "403" in detail:
-                    print("      토큰은 유효하지만 이 계정에 접근 권한이 없습니다.")
-                    print(f"      1) 로그인 상태로 https://huggingface.co/{GATED_REPO} 접속")
-                    print("         - 'Request access' 가 보이면 → 아직 신청 전. 약관에 동의한다")
-                    print("         - 'pending' 이면 → 승인 대기. 기다려야 한다")
-                    print("         - 이미 승인됐다면 → 토큰 권한 문제(아래)")
-                    print("      2) fine-grained 토큰이면 'Read access to contents of all public")
-                    print("         gated repos you can access' 체크. Classic → Read 가 확실하다")
-                else:
-                    print(f"      1) https://huggingface.co/{GATED_REPO} 에서 약관 동의")
-                    print("      2) https://huggingface.co/settings/tokens 에서 read 토큰 발급")
-                    print("      3) export HF_TOKEN=hf_...")
-            else:
-                for line in hints[key]:
-                    print(f"  · {name} → {line}")
+            for line in hints[key]:
+                print(f"  · {name} → {line}")
     elif warns:
         print(f"WARN {warns}건 — 진행 가능. 위 메모를 확인하세요.")
     else:
         print("전부 통과 — bash setup_vast.sh 로 진행하세요.")
     print("=" * 72)
     return 1 if fails else 0
+
+
+def _print_hf_hint(repo: str, detail: str) -> None:
+    """401(미인증) 과 403(인증됐으나 미승인) 은 대처가 다르다."""
+    print(f"  · {repo}")
+    if repo in GATED_HINT:
+        print(f"      {GATED_HINT[repo]}")
+    if "403" in detail:
+        print("      토큰은 유효하지만 이 계정에 접근 권한이 없습니다.")
+        print(f"      1) 로그인 상태로 https://huggingface.co/{repo} 접속")
+        print("         - 'Agree/Request access' 가 보이면 → 아직 동의 전. 동의한다")
+        print("         - 'pending' 이면 → 승인 대기. 기다려야 한다")
+        print("         - 이미 승인됐다면 → 토큰 권한 문제(아래)")
+        print("      2) fine-grained 토큰이면 'Read access to contents of all public")
+        print("         gated repos you can access' 체크. Classic → Read 가 확실하다")
+    else:
+        print(f"      1) https://huggingface.co/{repo} 에서 약관 동의")
+        print("      2) https://huggingface.co/settings/tokens 에서 read 토큰 발급")
+        print("      3) export HF_TOKEN=hf_...  (PowerShell: $env:HF_TOKEN=\"hf_...\")")
 
 
 if __name__ == "__main__":

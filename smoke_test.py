@@ -54,7 +54,14 @@ def make_fake_glb(path: Path) -> None:
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="img2pcd_smoke_"))
     out_root = tmp / "out"
-    part = img2pcd.PartSpec(name="bumper_cover", image="unused.jpg", target_mm=1750.0)
+    part = img2pcd.PartSpec(
+        name="bumper_cover",
+        image="unused.jpg",
+        target_mm=1750.0,
+        # 가짜 GLB 는 두께가 거의 없는 판이라 최소축이 실측보다 작게 나온다.
+        # 형상 판정이 실제로 FAIL 을 낼 수 있는지(=늘 PASS 가 아닌지) 확인하는 값.
+        expect_mm=[1750.0, 450.0, 350.0],
+    )
     st = img2pcd.Settings(points=50_000, smooth_iterations=2, seed=42)
 
     make_fake_glb(out_root / part.name / "mesh.glb")
@@ -72,6 +79,17 @@ def main() -> int:
         ("최장축 == target_mm(±1%)", abs(longest - 1750.0) < 17.5, f"{longest:.1f}mm"),
     )
     checks.append(("스케일 배율 기록됨", manifest["scale_factor"] > 0, str(manifest["scale_factor"])))
+
+    # 형상 판정: 정렬 비교라 축 순서와 무관해야 하고, 최장축은 항상 1.00 이어야 한다.
+    sc = manifest["shape_check"]
+    checks.append(("형상 판정 기록됨", sc["verdict"] in ("PASS", "FAIL"), sc["verdict"]))
+    checks.append(("최장축 배율 == 1.00", abs(sc["ratio"][0] - 1.0) < 0.01, str(sc["ratio"][0])))
+    flipped = img2pcd.shape_check([350.0, 1750.0, 450.0], [450.0, 350.0, 1750.0], 0.30)
+    checks.append(("축 순서 무관 (완전 일치 = PASS)", flipped["verdict"] == "PASS", str(flipped["ratio"])))
+    inflated = img2pcd.shape_check([1750.0, 963.0, 516.0], [1750.0, 450.0, 350.0], 0.30)
+    checks.append(
+        ("부풀림 감지 (Hunyuan3D 실측값)", inflated["verdict"] == "FAIL", f"최소축 x{inflated['thinnest_axis_ratio']}")
+    )
 
     for name in ("preview.png", "mesh_mm.ply", "manifest.json"):
         f = out_root / part.name / name

@@ -22,6 +22,15 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv || {
 echo "설치 위치: $TRELLIS_DIR"
 df -h "$(dirname "$TRELLIS_DIR")" | tail -1
 
+# gated 레포 접근을 여기서 먼저 본다. 확장 빌드 30분을 태운 뒤 401 을 만나면
+# 빌린 GPU 시간이 그대로 날아간다. DINOv3 와 briaai/RMBG-2.0 둘 다 필요하다.
+if ! python3 "$SPIKE_DIR/check_env.py" --hf; then
+  echo
+  echo "!! HF 접근 확인 실패 — 위 안내대로 약관 동의/토큰을 처리한 뒤 다시 실행하세요."
+  echo "   (RMBG-2.0 승인 없이 가려면 나중에 --rembg ZhengPeng7/BiRefNet 로 실행)"
+  exit 1
+fi
+
 # CUDA 가 여러 개 깔린 이미지에서 CuMesh 빌드가 깨지는 걸 막는다(이슈 #106).
 if [ -z "${CUDA_HOME:-}" ] && [ -d /usr/local/cuda ]; then
   export CUDA_HOME=/usr/local/cuda
@@ -73,6 +82,16 @@ echo
 echo "=== 4. 스파이크 의존성 ==="
 pip install -r "$SPIKE_DIR/requirements.txt"
 
+# TRELLIS.2 setup.sh 가 transformers 를 핀 없이 깔아 5.x 가 들어오면 DINOv3
+# 특징 추출이 죽는다. requirements.txt 의 핀이 실제로 먹었는지 확인한다.
+python -c "import transformers as t; v=t.__version__; print('transformers', v); print('!! 5.x 입니다. 4.57.x 를 권장: pip install transformers==4.57.6') if int(v.split(chr(46))[0])>=5 else None" || true
+
+echo
+echo "=== 4.5. 가중치 미리 받기 (16.4 GiB) ==="
+python "$SPIKE_DIR/prefetch_models.py" || {
+  echo "!! 가중치 다운로드 실패 — 위 로그의 레포를 확인하세요"; exit 1
+}
+
 echo
 echo "=== 5. Jupyter 커널 등록 (노트북에서 trellis2 env 선택용) ==="
 pip install ipykernel
@@ -106,7 +125,11 @@ cat <<EOF
   2) 실행
        cd $SPIKE_DIR
        conda activate trellis2      # 새 셸이면 필요
-       python img2pcd.py --config parts.yaml --out out
+       python img2pcd.py --backend trellis2 --out out_trellis
+
+     24GB 에서 메시 후처리 OOM 이 나면 자동으로 512 로 한 번 재시도한다.
+     처음부터 가볍게 가려면 --pipeline-type 512
+     RMBG-2.0 승인이 없으면 --rembg ZhengPeng7/BiRefNet
 
   3) 노트북으로 하려면 run_spike.ipynb 를 열고 커널을 "Python (trellis2)" 로 바꾼다
 

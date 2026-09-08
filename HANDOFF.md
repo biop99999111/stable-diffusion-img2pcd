@@ -1,4 +1,4 @@
-# 인계 문서 — 2026-09-08
+# 인계 문서 — 2026-09-08 (2차: TRELLIS.2 착수 전 점검·코드 준비 반영)
 
 ## 목적
 
@@ -40,8 +40,9 @@
 
 ## 다음에 할 일 (우선순위)
 
-1. **TRELLIS.2 로 같은 사진 재현** — DINOv3 gated 승인 완료(아래 참조). 미검증 백엔드.
+1. **TRELLIS.2 로 같은 사진 재현** — 미검증 백엔드. 코드는 준비 완료(2026-09-08 2차).
    `bbox_mm` 의 깊이가 300mm 대로 나오면 모델 차이가 실재, 비슷하게 부풀면 방법의 한계 확정.
+   남은 관문은 **`briaai/RMBG-2.0` 약관 동의** 하나 → `python check_env.py --hf`.
 2. **3/4 측면 뷰 사진으로 재시도** — 모델 교체보다 이쪽이 효과가 클 가능성이 높다.
    정면 직교가 깊이 단서 최소 각도이므로.
 3. (선택) **SPAR3D 백엔드 추가** — 중간 산출이 점군이라 FR-1 과 궁합이 좋고,
@@ -67,10 +68,23 @@
 - ⚠️ **`*-devel` 이미지 또는 PyTorch 템플릿** 필수. `*-runtime` 은 nvcc 가 없어 소스 빌드 실패.
 - 디스크 **100GB+**.
 
-### HuggingFace
+### HuggingFace — 받아야 하는 레포는 **4곳**(gated 2곳)
 
-- DINOv3 는 **Gating Group Collection** 으로 묶여 있어 컬렉션 승인이 개별 모델 전체에 적용된다.
-  2026-09-08 **ACCEPTED 확인** (`facebook/dinov3-vitl16-pretrain-lvd1689m` 파일 목록 접근 가능).
+`pipeline.json` 을 그대로 읽어 확인했다. 하나라도 막히면 `from_pretrained` 가 401 로 죽고,
+코드로 우회할 수 없다(모델 이름이 설정에 박혀 있다).
+
+| 레포 | 크기 | gated | 상태 |
+|---|---|---|---|
+| `microsoft/TRELLIS.2-4B` | 14.3 GiB | — | 공개 |
+| `microsoft/TRELLIS-image-large` | 0.14 GiB | — | 공개. **v1 레포**에서 sparse structure decoder 하나만 가져온다 |
+| `facebook/dinov3-vitl16-pretrain-lvd1689m` | 1.13 GiB | **manual** | 2026-09-08 ACCEPTED 확인 |
+| `briaai/RMBG-2.0` | 0.82 GiB | **auto** | ❗ **미확인** — 배경 제거용. 약관 동의 즉시 통과 |
+
+- **`briaai/RMBG-2.0` 이 새로 발견된 관문이다.** 이전 세션은 DINOv3 만 봤는데, 파이프라인은
+  배경 제거 모델도 `from_pretrained` 시점에 만든다. 동의 안 하면 DINOv3 를 통과해도 같은
+  자리에서 401 로 죽는다. 비상업 라이선스이기도 하다 → 대안 `--rembg ZhengPeng7/BiRefNet`(MIT).
+- 합계 **16.4 GiB**. `python check_env.py --hf` 가 4곳을 실제 HTTP 요청으로 확인한다
+  (GPU·설치 불필요 — 로컬 Windows 에서도 돈다).
 - `export HF_TOKEN=...` 필요. **Classic → Read** 토큰이 확실하다
   (fine-grained 는 'Read access to contents of all public gated repos' 체크가 빠지면 403).
 - 이전 세션에서 노출된 토큰 3개는 **revoke 할 것**.
@@ -78,25 +92,42 @@
 ## 재개 절차
 
 ```bash
+# 0) 인스턴스 빌리기 전에 — 로컬에서 승인 상태부터 본다 (30초, 설치 불필요)
 git clone https://github.com/biop99999111/trellis2-img2pcd.git
 cd trellis2-img2pcd
-export HF_TOKEN=<새 토큰>
+export HF_TOKEN=<새 토큰>          # PowerShell: $env:HF_TOKEN="..."
+python check_env.py --hf          # 4곳 전부 OK 여야 GPU 를 빌린다
 
-python check_env.py            # FAIL 0 확인 (gated 접근 포함)
-
-# TRELLIS.2 (미검증 백엔드 — 1순위 과제)
-bash setup_vast.sh 2>&1 | tee setup.log
+# 1) vast.ai (4090 24GB · *-devel 이미지 · 디스크 100GB+)
+python check_env.py               # FAIL 0 확인
+bash setup_vast.sh 2>&1 | tee setup.log     # 설치 + 가중치 16.4GiB 선다운로드
 conda activate trellis2
 python img2pcd.py --backend trellis2 --only bumper_cover --out out_trellis 2>&1 | tee t1.log
 
-# Hunyuan3D (검증됨 — 비교 기준)
+# 2) Hunyuan3D (검증됨 — 비교 기준. 이미 실측치가 있으니 재실행은 선택)
 bash setup_hunyuan3d.sh 2>&1 | tee setup_hy.log
 conda activate hunyuan3d
 python img2pcd.py --only bumper_cover --out out_hy
 ```
 
-`--out` 을 나눠 `out_trellis/*/preview.png` 와 `out_hy/*/preview.png` 를 나란히 비교한다.
-**판정 기준은 `bbox_mm`** — 위 표의 실제 치수와 대조.
+**판정은 자동이다.** `parts.yaml` 의 `expect_mm`(실측 3축)과 생성 bbox 를 내림차순으로
+맞대어 축별 배율을 찍는다. 최장축은 스케일 보정 때문에 항상 1.00 이므로 **최소축 배율**이
+판정선이다. 실행 끝에 이렇게 나온다:
+
+```
+  bumper_cover     300,000 pts  bbox_mm=[...]  4.58MB  형상 FAIL (최소축 x1.47)
+```
+
+- **최소축 x1.3 이하면 방법이 살아있는 것**이고, Hunyuan3D 처럼 1.5~7배면 같은 한계다.
+- 눈으로도 볼 거면 `out_trellis/*/preview.png` 와 `out_hy/*/preview.png` 를 나란히 놓는다.
+
+막히면:
+
+| 증상 | 조치 |
+|---|---|
+| 메시 후처리에서 OOM | 자동으로 `512` 재시도가 한 번 걸린다. 처음부터 가볍게 가려면 `--pipeline-type 512` |
+| RMBG-2.0 401 | `--rembg ZhengPeng7/BiRefNet` (MIT, 구조 동일) |
+| `'DINOv3ViTModel' object has no attribute 'layer'` | `pip install "transformers>=4.56,<5"` (패치가 있어 원래는 안 나야 한다) |
 
 ## 해결된 함정 (스크립트에 반영 완료 — 다시 안 만난다)
 
@@ -108,6 +139,9 @@ python img2pcd.py --only bumper_cover --out out_hy
 | 4 | 1.1 MB/s 스로틀 (회선은 169 MB/s) | `requirements.txt` 안에 중국 미러 `--extra-index-url` | grep 으로 해당 줄 제외 |
 | 5 | requirements 전체 실패 | `bpy==4.0` 이 PyPI 에서 삭제됨(4.2.0+ 는 py>=3.11) | grep 으로 제외. shape 경로엔 불필요함 확인 |
 | 6 | `conda activate` 실패 | 비대화형 서브셸 | `profile.d/conda.sh` 훅 선로드, `set -u` 제거 |
+| 7 | (예상) DINOv3 통과 후 다시 401 | 배경 제거 `briaai/RMBG-2.0` 도 gated | `check_env.py --hf` 가 4곳 전부 검사 · `--rembg` 로 교체 가능 |
+| 8 | (예상) `'DINOv3ViTModel' object has no attribute 'layer'` | 공식 `setup.sh` 가 transformers 를 핀 없이 깔아 5.x 유입. 5.x 는 블록을 encoder 하위로 옮김 | `requirements.txt` 에 `<5` 핀 + `backends.py` 가 두 레이아웃 모두 지원 |
+| 9 | (예상) 30분 빌드 후에야 gated 발견 | 접근 확인이 실행 시점 | `setup_vast.sh` 가 **시작 직후** `check_env.py --hf` 로 게이트 |
 
 ⚠️ 4번 관련: **설치 도중에 pip 인덱스를 바꾸지 말 것.** 캐시 키가 URL 기준이라
 무효화되어 받은 걸 다시 받는다. 처음부터 정리된 requirements 로 시작할 것.
@@ -122,7 +156,9 @@ python img2pcd.py --only bumper_cover --out out_hy
 | `smoke_test.py` | GPU 없이 CPU 단계 검증. **8/8 passed** |
 | `setup_vast.sh` / `setup_hunyuan3d.sh` | 설치 자동화 |
 | `run_spike.ipynb` | Jupyter 9섹션 |
-| `parts.yaml` | 부품 정의 + `target_mm`(실측 치수) + defaults |
+| `parts.yaml` | 부품 정의 + `target_mm`(실측 치수) + `expect_mm`(3축 실측) + defaults |
+| `prefetch_models.py` | 가중치 16.4GiB 선다운로드 / `--dry-run` 이면 접근 확인만 |
+| `test_compat.py` | transformers 4.x/5.x DINOv3 패치 검증 (GPU·가중치 불필요, 10/10) |
 
 **백엔드 경계**: GPU 를 쓰는 1~2단계만 `backends.py` 에 격리. 3~6단계는 GLB 하나만
 받으므로 모델을 갈아끼워도 그대로 돌고, 두 모델 결과를 같은 뒷단으로 비교할 수 있다.

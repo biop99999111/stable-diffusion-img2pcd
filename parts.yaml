@@ -6,11 +6,17 @@ parts:
     image: inputs/bumper.jpg     # 600x342 — 전면 범퍼 커버, 흰 배경
     target_mm: 1750              # 승용 범퍼 커버 전폭 대략치 — 실측값으로 교체할 것
     fit_axis: auto
+    # 3축 실측 대략치(mm). 생성 결과와 자동 대조해 형상 PASS/FAIL 을 찍는다.
+    # 최장축은 스케일 보정으로 항상 맞으므로 판정선은 최소축(=깊이) 배율이다.
+    # Hunyuan3D 실측: 1750 x 963 x 516 -> 최소축 x1.47 FAIL
+    expect_mm: [1750, 450, 350]
 
   - name: hood
     image: inputs/hood.png       # 1299x1023 — 본네트 외판(앞면), 흰색
     target_mm: 1500              # 본네트 전폭 대략치 — 실측값으로 교체할 것
     fit_axis: auto
+    # Hunyuan3D 실측: 1490 x 1240 x 1500 -> 최소축 x6.2 FAIL (판때기가 정육면체로)
+    expect_mm: [1500, 1300, 200]
 
 # inputs/hood_inner.png (1366x1042) = 같은 본네트의 **내판(뒷면)**.
 # 보강재·플랜지·스폿 용접부가 보이는 면이라 spec U-13(내판까지 스캔할 것인가)과
@@ -31,6 +37,7 @@ defaults:
   decimation_target: 500000
   simplify_target: 16777216
   single_view: false       # true = hidden point removal 로 3D 카메라 1시점처럼 자름
+  shape_tolerance: 0.30    # expect_mm 대비 축별 허용 오차. 0.30 = ±30%
 
   # 생성 백엔드
   backend: hunyuan3d       # hunyuan3d | trellis2
@@ -41,3 +48,13 @@ defaults:
                            # false 면 색이 없어 PCD rgb 가 회색이 된다
   paint_views: 6
   paint_resolution: 512
+
+  # --- trellis2 전용
+  pipeline_type: 1024_cascade   # 512 | 1024 | 1024_cascade | 1536_cascade
+                                # 24GB 에서 후처리 OOM 이 나면 512 (업스트림 이슈 #188)
+  max_num_tokens: null          # null 이면 TRELLIS.2 기본값(49152)
+  oom_fallback: true            # OOM 이면 pipeline_type 을 낮춰 한 번 자동 재시도
+  oom_fallback_type: "512"
+  rembg_model: null             # null = pipeline.json 기본 briaai/RMBG-2.0
+                                #   -> gated(약관 동의 필요) + 비상업 라이선스
+                                # 승인이 없거나 상업 사용이면 ZhengPeng7/BiRefNet (MIT)

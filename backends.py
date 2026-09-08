@@ -3,8 +3,10 @@
 img2pcd.py 의 3~6단계(mm 스케일·스무딩·샘플링·PCD·검증)는 백엔드와 무관하게
 GLB 하나만 받으면 되므로, 모델을 갈아끼워도 그대로 재사용된다.
 
-  trellis2   microsoft/TRELLIS.2-4B  — 품질 최상위. 단 이미지 인코더로 쓰는
-             facebook/dinov3-... 가 gated: manual 이라 Meta 수동 승인이 필요하다.
+  trellis2   microsoft/TRELLIS.2-4B  — 품질 최상위. gated 의존성이 **둘**이다:
+             facebook/dinov3-...(이미지 인코더, manual 승인) 와
+             briaai/RMBG-2.0(배경 제거, 즉시 승인 · 비상업). 후자는 --rembg 로 교체 가능.
+             텍스처가 run() 안에 포함돼 별도 단계가 없다.
   hunyuan3d  tencent/Hunyuan3D-2.1   — gated 의존성 없음. shape 10GB / texture 21GB.
 """
 
@@ -89,6 +91,106 @@ def _report_gpu() -> None:
 
 # ---------------------------------------------------------------- TRELLIS.2
 
+# transformers 5.x 는 DINOv3ViTModel 의 트랜스포머 블록을 encoder 하위
+# (model.model.layer)로 옮겼는데 TRELLIS.2 원본은 model.layer 만 안다.
+# setup.sh 가 transformers 를 핀 없이 깔기 때문에 오늘 설치하면 5.x 가 들어와
+# `AttributeError: 'DINOv3ViTModel' object has no attribute 'layer'` 로 죽는다
+# (업스트림 이슈 #147 · PR #148/#156, 셋 다 미머지).
+_DINOV3_HINT = (
+    "DINOv3 레이어 경로를 찾지 못했습니다. transformers 버전 문제일 가능성이 큽니다 "
+    "— requirements.txt 의 `transformers>=4.56,<5` 핀이 유지됐는지 확인하세요."
+)
+
+
+def _patch_dinov3_layout() -> None:
+    """DinoV3FeatureExtractor 를 transformers 4.x / 5.x 양쪽에서 돌게 만든다.
+
+    v5 에서 바뀐 것은 레이어의 '위치'뿐이고 embeddings·rope·layer 의 forward 규약은
+    그대로다. 그래서 원본과 같은 연산을 그대로 재현할 수 있다.
+
+    model.forward() 로 우회하지 않는 이유: 그 경로는 마지막에 학습된 affine 을 가진
+    self.norm 을 태우는데 원본은 affine 없는 F.layer_norm 을 쓴다. 조건 특징이
+    달라지면 "TRELLIS.2 가 Hunyuan3D 보다 나은가"라는 질문 자체가 오염된다.
+    """
+    from trellis2.modules import image_feature_extractor as ife
+
+    if getattr(ife.DinoV3FeatureExtractor, "_layout_patched", False):
+        return
+
+    import torch.nn.functional as F
+
+    def extract_features(self, image):
+        model = self.model
+        layers = getattr(model, "layer", None)          # transformers 4.56~4.57
+        if layers is None:
+            layers = getattr(getattr(model, "model", None), "layer", None)  # 5.x
+        if layers is None or not hasattr(model, "embeddings") or not hasattr(model, "rope_embeddings"):
+            raise SystemExit(_DINOV3_HINT)
+        image = image.to(model.embeddings.patch_embeddings.weight.dtype)
+        hidden_states = model.embeddings(image, bool_masked_pos=None)
+        position_embeddings = model.rope_embeddings(image)
+        for layer_module in layers:
+            hidden_states = layer_module(hidden_states, position_embeddings=position_embeddings)
+        return F.layer_norm(hidden_states, hidden_states.shape[-1:])
+
+    ife.DinoV3FeatureExtractor.extract_features = extract_features
+    ife.DinoV3FeatureExtractor._layout_patched = True
+    print("[gen] DINOv3 레이어 접근 패치 적용 (transformers 4.x/5.x 공용)")
+
+
+def _patch_rembg(model_name: str) -> None:
+    """배경 제거 모델을 갈아끼운다.
+
+    pipeline.json 은 briaai/RMBG-2.0 을 박아두는데 이게 gated 라 승인 없이는
+    from_pretrained 단계에서 401 로 죽는다(비상업 라이선스이기도 하다).
+    구조가 같은 ZhengPeng7/BiRefNet(MIT)로 바꾸면 승인 없이 돈다.
+    """
+    from trellis2.pipelines import rembg
+
+    if getattr(rembg.BiRefNet, "_forced_model", None) == model_name:
+        return
+    original = getattr(rembg.BiRefNet, "_original_init", rembg.BiRefNet.__init__)
+
+    def __init__(self, model_name_arg: str = "", **kwargs):
+        if model_name_arg and model_name_arg != model_name:
+            print(f"[gen] rembg 교체: {model_name_arg} -> {model_name}")
+        original(self, model_name, **kwargs)
+
+    rembg.BiRefNet._original_init = original
+    rembg.BiRefNet.__init__ = __init__
+    rembg.BiRefNet._forced_model = model_name
+
+
+def _transformers_note() -> str:
+    try:
+        import transformers
+
+        version = transformers.__version__
+    except Exception:
+        return "transformers 미설치"
+    major = int(version.split(".")[0]) if version[:1].isdigit() else 0
+    warn = "  <- 5.x. 패치로 돌지만 4.57.x 를 권장" if major >= 5 else ""
+    return f"transformers {version}{warn}"
+
+
+def _is_oom(exc: BaseException) -> bool:
+    return "out of memory" in str(exc).lower() or type(exc).__name__ == "OutOfMemoryError"
+
+
+def _load_failure_hint(exc: BaseException) -> str:
+    """from_pretrained 가 죽었을 때 gated 401 을 알아보게 만든다."""
+    text = str(exc)
+    lines = [f"TRELLIS.2 파이프라인 로드 실패: {type(exc).__name__}: {text[:400]}"]
+    if "401" in text or "gated" in text.lower() or "restricted" in text.lower():
+        lines += [
+            "",
+            "gated 레포 접근 실패로 보입니다. `python check_env.py --hf` 로 어느 레포인지 확인하세요.",
+            "  · facebook/dinov3-...      이미지 인코더. Meta 수동 승인 필요",
+            "  · briaai/RMBG-2.0          배경 제거. 약관 동의 즉시 통과",
+            "    (RMBG-2.0 을 쓰지 않으려면 --rembg ZhengPeng7/BiRefNet)",
+        ]
+    return chr(10).join(lines)
+
 
 class Trellis2Backend:
     name = "trellis2"
@@ -113,17 +215,39 @@ class Trellis2Backend:
             sys.path.insert(0, str(found))
             print(f"[gen] sys.path 에 TRELLIS.2 추가: {found}")
 
+        print(f"[gen] {_transformers_note()}")
+        _patch_dinov3_layout()
+
+        # 배경 제거 모델. 기본값(None)은 pipeline.json 의 briaai/RMBG-2.0 을 그대로 쓴다.
+        rembg_model = self.st.rembg_model or os.environ.get("TRELLIS2_REMBG")
+        if rembg_model:
+            _patch_rembg(rembg_model)
+
         from trellis2.pipelines import Trellis2ImageTo3DPipeline
 
         model_id = self.st.model_id or self.default_model
         print(f"[gen] loading {model_id} ...")
         t0 = time.time()
-        self.pipeline = Trellis2ImageTo3DPipeline.from_pretrained(model_id)
+        try:
+            self.pipeline = Trellis2ImageTo3DPipeline.from_pretrained(model_id)
+        except Exception as exc:
+            raise SystemExit(_load_failure_hint(exc)) from exc
         self.pipeline.cuda()
         print(f"[gen] loaded in {time.time() - t0:.1f}s")
         print(f"[gen] run signature: {inspect.signature(self.pipeline.run)}")
         _report_gpu()
         return self
+
+    def _run_kwargs(self, pipeline_type: str | None) -> dict:
+        wanted: dict = {}
+        if self.st.seed is not None:
+            wanted["seed"] = self.st.seed
+        if pipeline_type:
+            wanted["pipeline_type"] = pipeline_type
+        if self.st.max_num_tokens:
+            wanted["max_num_tokens"] = self.st.max_num_tokens
+        wanted.update(self.st.run_kwargs)
+        return _accepted_kwargs(self.pipeline.run, wanted)
 
     def generate(self, image_path: Path, out_glb: Path, st) -> dict:
         import o_voxel
@@ -134,17 +258,29 @@ class Trellis2Backend:
             image = image.convert("RGB")
         print(f"[gen] {image_path.name} {image.size} {image.mode}")
 
-        wanted: dict = {}
-        if st.seed is not None:
-            wanted["seed"] = st.seed
-        wanted.update(st.run_kwargs)
-        kwargs = _accepted_kwargs(self.pipeline.run, wanted)
+        # 24GB 급에서 1024_cascade 가 터지면 빌린 GPU 세션을 통째로 날린다.
+        # 한 번은 가벼운 해상도로 자동 재시도해서 최소한 형상 판정은 얻는다(이슈 #188).
+        attempts = [st.pipeline_type]
+        if st.oom_fallback and st.pipeline_type != st.oom_fallback_type:
+            attempts.append(st.oom_fallback_type)
 
-        _free_cuda()
-        t0 = time.time()
-        mesh = self.pipeline.run(image, **kwargs)[0]
-        t_gen = time.time() - t0
-        print(f"[gen] mesh in {t_gen:.1f}s")
+        mesh, t_gen, used_type = None, 0.0, attempts[0]
+        for i, ptype in enumerate(attempts):
+            kwargs = self._run_kwargs(ptype)
+            _free_cuda()
+            t0 = time.time()
+            try:
+                mesh = self.pipeline.run(image, **kwargs)[0]
+            except Exception as exc:
+                if not _is_oom(exc) or i == len(attempts) - 1:
+                    raise
+                print(f"[gen] OOM at pipeline_type={ptype} -> {attempts[i + 1]} 로 재시도")
+                _free_cuda()
+                continue
+            t_gen = time.time() - t0
+            used_type = ptype
+            break
+        print(f"[gen] mesh in {t_gen:.1f}s (pipeline_type={used_type})")
 
         if st.simplify_target:
             mesh.simplify(st.simplify_target)
@@ -177,12 +313,15 @@ class Trellis2Backend:
         print(f"[gen] peak vram: {peak:.2f} GiB")
         return {
             "backend": self.name,
+            "pipeline_type": used_type,
+            "rembg_model": self.st.rembg_model
+            or os.environ.get("TRELLIS2_REMBG")
+            or "briaai/RMBG-2.0",
             "t_generate_s": round(t_gen, 2),
             "t_glb_s": round(t_glb, 2),
             "peak_vram_gib": round(peak, 2),
             "textured": True,
         }
-
 
 # ---------------------------------------------------------------- Hunyuan3D-2.1
 

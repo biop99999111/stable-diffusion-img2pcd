@@ -51,6 +51,9 @@ class PartSpec:
     image: str
     target_mm: float
     fit_axis: str = "auto"
+    # 실측 3축 치수(mm). 넣으면 생성 형상이 실제와 얼마나 어긋났는지 자동 판정한다.
+    # 이 스파이크의 판정 기준이 bbox_mm 이므로 눈으로 표를 대조하지 않아도 되게 만든다.
+    expect_mm: list[float] | None = None
 
 
 @dataclass
@@ -64,9 +67,16 @@ class Settings:
     single_view: bool = False
     seed: int | None = 42
     run_kwargs: dict = field(default_factory=dict)
+    shape_tolerance: float = 0.30    # expect_mm 대비 축별 허용 오차(±30%)
     # 생성 백엔드 (backends.py)
     backend: str = "hunyuan3d"       # trellis2 | hunyuan3d
     model_id: str | None = None      # None 이면 백엔드 기본값
+    # --- trellis2 전용
+    pipeline_type: str = "1024_cascade"   # 512 | 1024 | 1024_cascade | 1536_cascade
+    max_num_tokens: int | None = None     # None 이면 TRELLIS.2 기본(49152)
+    rembg_model: str | None = None        # None 이면 pipeline.json 기본(briaai/RMBG-2.0)
+    oom_fallback: bool = True             # OOM 이면 한 번 더 가볍게 재시도
+    oom_fallback_type: str = "512"
     texture: bool = False            # hunyuan3d 전용. 켜면 VRAM 21GB 추가로 필요
     paint_views: int = 6
     paint_resolution: int = 512
@@ -125,6 +135,41 @@ def scale_to_mm(tri, target_mm: float, fit_axis: str = "auto") -> tuple[float, n
         f"bbox_mm=({bbox_mm[0]:.1f}, {bbox_mm[1]:.1f}, {bbox_mm[2]:.1f})"
     )
     return scale, bbox_mm
+
+
+def shape_check(bbox_mm, expect_mm, tolerance: float = 0.30) -> dict:
+    """생성 형상이 실측 치수와 얼마나 어긋났는지 축별 배율로 판정한다.
+
+    축 순서를 맞추지 않고 양쪽을 내림차순 정렬해 비교한다. 생성 메시는 방향이
+    제멋대로라 x/y/z 를 그대로 짝지으면 의미가 없고, 우리가 알고 싶은 것은
+    "긴 축·중간 축·짧은 축의 비율이 실제와 같은가"이기 때문이다.
+
+    최장축은 scale_to_mm 가 target_mm 에 맞춰버리므로 항상 1.00 이 나온다.
+    실제 판정선은 **최소축 배율**(= 깊이 부풀림)이다. Hunyuan3D 는 여기서
+    범퍼 1.47배 · 본네트 7.5배가 나왔고, 그래서 계측용으로 못 쓴다.
+    """
+    got = sorted((float(v) for v in bbox_mm), reverse=True)
+    want = sorted((float(v) for v in expect_mm), reverse=True)
+    if len(want) != 3 or min(want) <= 0:
+        raise ValueError(f"expect_mm 은 양수 3개여야 합니다: {expect_mm}")
+
+    ratio = [g / w for g, w in zip(got, want)]
+    worst = max(ratio, key=lambda r: max(r, 1 / r))
+    ok = all(1 / (1 + tolerance) <= r <= 1 + tolerance for r in ratio)
+    info = {
+        "expect_mm_sorted": [round(v, 1) for v in want],
+        "got_mm_sorted": [round(v, 1) for v in got],
+        "ratio": [round(r, 2) for r in ratio],
+        "thinnest_axis_ratio": round(ratio[2], 2),
+        "worst_ratio": round(worst, 2),
+        "tolerance": tolerance,
+        "verdict": "PASS" if ok else "FAIL",
+    }
+    print(
+        f"[shape] {info['verdict']} 실측 {info['expect_mm_sorted']} vs 생성 "
+        f"{info['got_mm_sorted']} · 배율 {info['ratio']} · 최소축 x{info['thinnest_axis_ratio']}"
+    )
+    return info
 
 
 def smooth_mesh(tri, iterations: int):
@@ -290,6 +335,8 @@ def process_part(part: PartSpec, st: Settings, out_root: Path, backend=None, bas
     tri = smooth_mesh(tri, st.smooth_iterations)
     manifest["scale_factor"] = round(scale, 4)
     manifest["bbox_mm"] = [round(float(v), 2) for v in bbox_mm]
+    if part.expect_mm:
+        manifest["shape_check"] = shape_check(bbox_mm, part.expect_mm, st.shape_tolerance)
 
     # 나중에 FR-2(Open3D Poisson 재구성)와 비교할 수 있게 mm 메시도 남긴다.
     tri.export(str(out_dir / "mesh_mm.ply"))
@@ -346,6 +393,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--paint-views", type=int, help="hunyuan3d texture 뷰 수(기본 6)")
     ap.add_argument("--paint-resolution", type=int, help="hunyuan3d texture 해상도(기본 512)")
+    ap.add_argument(
+        "--pipeline-type",
+        choices=["512", "1024", "1024_cascade", "1536_cascade"],
+        help="trellis2: 생성 해상도. 기본 1024_cascade. "
+        "24GB 에서 OOM 이면 512 (이슈 #188)",
+    )
+    ap.add_argument("--max-num-tokens", type=int, help="trellis2: 토큰 상한(기본 49152)")
+    ap.add_argument(
+        "--rembg",
+        help="trellis2: 배경 제거 모델 교체. 기본은 pipeline.json 의 briaai/RMBG-2.0 "
+        "(gated·비상업). 승인이 없으면 ZhengPeng7/BiRefNet (MIT)",
+    )
     ap.add_argument("--run-kwargs", help="run() 추가 인자 JSON")
     args = ap.parse_args(argv)
 
@@ -371,6 +430,12 @@ def main(argv: list[str] | None = None) -> int:
         st.paint_views = args.paint_views
     if args.paint_resolution:
         st.paint_resolution = args.paint_resolution
+    if args.pipeline_type:
+        st.pipeline_type = args.pipeline_type
+    if args.max_num_tokens:
+        st.max_num_tokens = args.max_num_tokens
+    if args.rembg:
+        st.rembg_model = args.rembg
     if args.run_kwargs:
         st.run_kwargs = json.loads(args.run_kwargs)
     if args.only:
@@ -397,9 +462,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\n{'=' * 60}\n[done] {len(results)} 부품 -> {out_root}")
     for r in results:
         v = r["verify"]
+        shape = r.get("shape_check")
+        verdict = f"  형상 {shape['verdict']} (최소축 x{shape['thinnest_axis_ratio']})" if shape else ""
         print(
             f"  {r['part']:14s} {v['point_count']:>9,} pts  "
-            f"bbox_mm={v['bbox_mm']}  {v['size_mb']}MB"
+            f"bbox_mm={v['bbox_mm']}  {v['size_mb']}MB{verdict}"
         )
     print(f"[done] 요약: {summary}")
     return 0
