@@ -193,19 +193,48 @@ def main() -> int:
         mark = {PASS: "  OK  ", WARN: " WARN ", FAIL: " FAIL "}[level]
         print(f"[{mark}] {name:{width}s}  {detail}")
 
-    fails = sum(1 for lv, _, _ in results if lv == FAIL)
+    failed_names = [n for lv, n, _ in results if lv == FAIL]
+    failed_details = {n: d for lv, n, d in results if lv == FAIL}
+    fails = len(failed_names)
     warns = sum(1 for lv, _, _ in results if lv == WARN)
+
+    # 실패한 항목에 대한 안내만 찍는다. 전부 찍으면 멀쩡한 항목까지 문제로 보인다.
+    hints: dict[str, list[str]] = {
+        "CUDA toolkit": ["vast.ai 에서 *-devel 또는 PyTorch 템플릿 인스턴스로 다시 띄운다"],
+        "VRAM": ["24GB+ (4090/A10G/L40S) 로 바꾼다"],
+        "디스크": ["인스턴스 디스크를 100GB 이상으로 늘린다"],
+        "conda": ["miniforge/miniconda 를 설치하거나 conda 가 있는 이미지를 쓴다"],
+        "gcc": ["apt install -y build-essential"],
+        "OS": ["TRELLIS.2 는 Linux 전용 — Linux 인스턴스가 필요하다"],
+        "gated 접근": [],  # 아래에서 401/403 을 구분해 채운다
+    }
+
     print("\n" + "=" * 72)
     if fails:
-        print(f"FAIL {fails}건 · WARN {warns}건 — 이대로 setup_vast.sh 를 돌리면 도중에 깨집니다.")
-        print("  · nvcc 없음      → vast.ai 에서 *-devel 또는 PyTorch 템플릿 인스턴스로 다시 띄운다")
-        print("  · VRAM 부족      → 24GB+ (4090/A10G/L40S) 로 바꾼다")
-        print("  · 디스크 부족    → 인스턴스 디스크를 100GB 이상으로 늘린다")
-        print(f"  · gated 접근     → 1) https://huggingface.co/{GATED_REPO} 에서 약관 동의")
-        print("                     2) https://huggingface.co/settings/tokens 에서 read 토큰 발급")
-        print("                        (fine-grained 면 'Read access to contents of all public")
-        print("                         gated repos you can access' 체크 필수)")
-        print("                     3) export HF_TOKEN=hf_...")
+        print(f"FAIL {fails}건 · WARN {warns}건 — 이대로 진행하면 도중에 깨집니다.")
+        for name in failed_names:
+            key = next((k for k in hints if name.startswith(k)), None)
+            if key is None:
+                continue
+            if key == "gated 접근":
+                # 401(미인증) 과 403(인증됐으나 미승인) 은 대처가 다르다.
+                detail = failed_details[name]
+                print(f"  · {name}")
+                if "403" in detail:
+                    print("      토큰은 유효하지만 이 계정에 접근 권한이 없습니다.")
+                    print(f"      1) 로그인 상태로 https://huggingface.co/{GATED_REPO} 접속")
+                    print("         - 'Request access' 가 보이면 → 아직 신청 전. 약관에 동의한다")
+                    print("         - 'pending' 이면 → 승인 대기. 기다려야 한다")
+                    print("         - 이미 승인됐다면 → 토큰 권한 문제(아래)")
+                    print("      2) fine-grained 토큰이면 'Read access to contents of all public")
+                    print("         gated repos you can access' 체크. Classic → Read 가 확실하다")
+                else:
+                    print(f"      1) https://huggingface.co/{GATED_REPO} 에서 약관 동의")
+                    print("      2) https://huggingface.co/settings/tokens 에서 read 토큰 발급")
+                    print("      3) export HF_TOKEN=hf_...")
+            else:
+                for line in hints[key]:
+                    print(f"  · {name} → {line}")
     elif warns:
         print(f"WARN {warns}건 — 진행 가능. 위 메모를 확인하세요.")
     else:
