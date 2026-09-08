@@ -32,11 +32,14 @@ echo "=== 0-1. pip 인덱스 정리 ==="
 # 응답이 몇 분씩 멈춘다(실측: basicsr 빌드 의존성 설치에서 무한 정지).
 # PyPI 만 쓰도록 덮어쓴다. 중국 리전이면 PIP_KEEP_MIRRORS=1 로 이 절을 건너뛴다.
 if [ -z "${PIP_KEEP_MIRRORS:-}" ]; then
+  # PIP_EXTRA_INDEX_URL="" 로는 안 지워진다 — 미러가 pip 설정 파일에 박혀 있으면
+  # 빈 환경변수가 그걸 덮지 못한다(실측: 인덱스 목록에 그대로 남음).
+  # 설정 파일 자체를 무시하고 인덱스를 환경변수로만 준다.
+  export PIP_CONFIG_FILE=/dev/null
   export PIP_INDEX_URL="https://pypi.org/simple"
-  export PIP_EXTRA_INDEX_URL=""
   export PIP_DEFAULT_TIMEOUT=30
   export PIP_RETRIES=3
-  echo "PIP_INDEX_URL=$PIP_INDEX_URL (extra-index 비움)"
+  echo "PIP_CONFIG_FILE=/dev/null · PIP_INDEX_URL=$PIP_INDEX_URL"
 fi
 
 echo
