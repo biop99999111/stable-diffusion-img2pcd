@@ -1,0 +1,6 @@
+data/
+out/
+out_*/
+__pycache__/
+.venv/
+*.local.yaml
