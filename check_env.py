@@ -17,8 +17,16 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
+
+# TRELLIS.2 가 이미지 인코더로 쓰는 gated 모델. 여기 접근이 안 되면 파이프라인
+# 로드가 401 로 죽는다 — 15GB 받고 나서가 아니라 여기서 먼저 걸러낸다.
+GATED_REPO = "facebook/dinov3-vitl16-pretrain-lvd1689m"
+GATED_URL = f"https://huggingface.co/{GATED_REPO}/resolve/main/config.json"
+HF_TOKEN_VARS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACEHUB_API_TOKEN")
 results: list[tuple[str, str, str]] = []
 
 
@@ -126,6 +134,41 @@ def check_torch() -> None:
     add(PASS, "torch(현재)", f"{torch.__version__} · cuda={torch.cuda.is_available()} (참고용)")
 
 
+def check_hf_gated() -> None:
+    """gated 모델(DINOv3) 접근 가능 여부를 실제 HTTP 요청으로 확인한다.
+
+    TRELLIS.2 는 이미지 인코더로 이 모델을 쓴다. 승인/토큰이 없으면
+    Trellis2ImageTo3DPipeline.from_pretrained 가 401 GatedRepoError 로 죽는다.
+    """
+    token = next((os.environ[v] for v in HF_TOKEN_VARS if os.environ.get(v)), None)
+    add(
+        PASS if token else WARN,
+        "HF 토큰",
+        f"{next(v for v in HF_TOKEN_VARS if os.environ.get(v))} 설정됨"
+        if token
+        else "미설정 — gated 모델 접근과 다운로드 속도에 필요",
+    )
+
+    req = urllib.request.Request(GATED_URL)
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            ok = resp.status == 200
+        add(PASS if ok else WARN, f"gated 접근 ({GATED_REPO})", f"HTTP {resp.status}")
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            add(
+                FAIL,
+                f"gated 접근 ({GATED_REPO})",
+                f"HTTP {e.code} — 약관 동의 + 토큰 필요 (아래 안내 참조)",
+            )
+        else:
+            add(WARN, f"gated 접근 ({GATED_REPO})", f"HTTP {e.code} — 판정 보류")
+    except Exception as e:  # 네트워크 차단·DNS 실패 등
+        add(WARN, f"gated 접근 ({GATED_REPO})", f"확인 불가(네트워크): {type(e).__name__}")
+
+
 def main() -> int:
     print("=" * 72)
     print("TRELLIS.2 실행 환경 진단")
@@ -142,6 +185,7 @@ def main() -> int:
     check_tool("git", "git", FAIL)
     check_tool("gcc", "gcc", FAIL, "CUDA 확장 소스 빌드에 필요")
     check_tool("ninja", "ninja", WARN, "없어도 setup.sh --basic 이 설치한다")
+    check_hf_gated()
 
     print()
     width = max(len(n) for _, n, _ in results)
@@ -157,6 +201,11 @@ def main() -> int:
         print("  · nvcc 없음      → vast.ai 에서 *-devel 또는 PyTorch 템플릿 인스턴스로 다시 띄운다")
         print("  · VRAM 부족      → 24GB+ (4090/A10G/L40S) 로 바꾼다")
         print("  · 디스크 부족    → 인스턴스 디스크를 100GB 이상으로 늘린다")
+        print(f"  · gated 접근     → 1) https://huggingface.co/{GATED_REPO} 에서 약관 동의")
+        print("                     2) https://huggingface.co/settings/tokens 에서 read 토큰 발급")
+        print("                        (fine-grained 면 'Read access to contents of all public")
+        print("                         gated repos you can access' 체크 필수)")
+        print("                     3) export HF_TOKEN=hf_...")
     elif warns:
         print(f"WARN {warns}건 — 진행 가능. 위 메모를 확인하세요.")
     else:

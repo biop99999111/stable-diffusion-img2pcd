@@ -37,6 +37,25 @@
 **대신 CUDA toolkit 은 반드시 있어야 한다.** CuMesh · o-voxel · flexgemm · nvdiffrast 가
 **소스 빌드**라서 `nvcc` 가 필요하다. vast.ai 에서 `*-runtime` 이미지를 고르면 여기서 실패한다.
 
+### HuggingFace gated 모델 (필수)
+
+TRELLIS.2 는 이미지 인코더로 **[`facebook/dinov3-vitl16-pretrain-lvd1689m`](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m)**
+을 쓰는데 이게 **gated repo** 다. 승인·토큰 없이 돌리면 파이프라인 로드가 이렇게 죽는다:
+
+```
+huggingface_hub.errors.GatedRepoError: 401 Client Error.
+Cannot access gated repo for url .../dinov3-vitl16-pretrain-lvd1689m/resolve/main/config.json
+```
+
+1. https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m 에서 **약관 동의** (보통 즉시 승인)
+2. https://huggingface.co/settings/tokens 에서 **read 토큰** 발급
+   - ⚠️ fine-grained 토큰이면 **"Read access to contents of all public gated repos you can access"**
+     를 반드시 체크한다. 안 그러면 승인을 받아도 계속 401 이 난다. Classic → Read 가 확실하다.
+3. `export HF_TOKEN=hf_...`
+
+토큰이 있으면 TRELLIS.2-4B 가중치(~15GB) 다운로드의 rate limit 도 같이 풀린다.
+`check_env.py` 가 이걸 **실제 HTTP 요청으로** 확인하므로, 15GB 를 받기 전에 걸러진다.
+
 ## 실행
 
 ```bash
