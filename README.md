@@ -103,6 +103,11 @@ Hunyuan 텍스처 실행 시 해당 모듈이 없는 경우에만 공개 API의 
 설치 패키지나 torch/torchvision 버전은 변경하지 않습니다.
 `python -m unittest test_basicsr_compat -v`로 import 호환 동작 3개를 검증합니다.
 
+Hunyuan의 `simplify_quadric_decimation(target_count)`는 최신 trimesh에서 면 개수를 감소 비율로 해석합니다.
+텍스처 실행 시 설치된 Hunyuan 단순화 함수의 해당 호출만 `face_count=target_count`로 변경합니다.
+원본 소스 파일은 수정하지 않으며 전처리와 목표 면 개수는 유지합니다.
+`python -m unittest test_decimation_compat test_basicsr_compat test_sd_spike -v`의 CPU 검사 17개가 통과했습니다.
+
 ```bash
 python -m unittest test_sd_spike -v
 python smoke_test.py

@@ -349,6 +349,34 @@ def _patch_basicsr_torchvision() -> None:
     print("[compat] BasicSR rgb_to_grayscale -> torchvision.transforms.functional")
 
 
+def _patch_hunyuan_decimation() -> None:
+    """Fix only Hunyuan's positional face-count call, preserving its preprocessing."""
+    import importlib
+    import textwrap
+    import trimesh
+
+    if "face_count" not in inspect.signature(trimesh.Trimesh.simplify_quadric_decimation).parameters:
+        return  # Older trimesh uses a positional face count already.
+    module = importlib.import_module("utils.simplify_mesh_utils")
+    original = module.mesh_simplify_trimesh
+    if getattr(original, "_img2pcd_face_count_fixed", False):
+        return
+    source = textwrap.dedent(inspect.getsource(original))
+    old = ".simplify_quadric_decimation(target_count)"
+    if old not in source:
+        return  # Upstream no longer contains the broken call.
+    source = source.replace(old, ".simplify_quadric_decimation(face_count=target_count)")
+    namespace = {}
+    # Recompile this one upstream function with its original globals. This keeps
+    # MeshLab cleanup, exports and target_count defaults exactly as installed.
+    exec(compile(source, inspect.getsourcefile(original) or "<hunyuan-decimation>", "exec"),
+         original.__globals__, namespace)
+    fixed = namespace[original.__name__]
+    fixed._img2pcd_face_count_fixed = True
+    module.mesh_simplify_trimesh = fixed
+    print("[compat] Hunyuan mesh simplification -> face_count=target_count")
+
+
 class Hunyuan3DBackend:
     name = "hunyuan3d"
     default_model = "tencent/Hunyuan3D-2.1"
@@ -408,6 +436,7 @@ class Hunyuan3DBackend:
                 "--extra-index-url https://download.blender.org/pypi/"
             ) from exc
         from textureGenPipeline import Hunyuan3DPaintConfig, Hunyuan3DPaintPipeline
+        _patch_hunyuan_decimation()
         return Hunyuan3DPaintConfig, Hunyuan3DPaintPipeline
 
     @staticmethod
